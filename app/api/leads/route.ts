@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { checkApiKey } from '@/lib/auth';
+import { buildCorsHeaders } from '@/lib/cors';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -46,15 +47,17 @@ type SubmitBody = {
  * rate-limit por IP.
  */
 export async function POST(request: Request): Promise<Response> {
+  const cors = buildCorsHeaders(request.headers.get('origin'));
+
   let body: SubmitBody;
   try {
     body = await request.json();
   } catch {
-    return NextResponse.json({ ok: false, error: 'Body inválido, se esperaba JSON.' }, { status: 400 });
+    return NextResponse.json({ ok: false, error: 'Body inválido, se esperaba JSON.' }, { status: 400, headers: cors });
   }
 
   if (typeof body.website === 'string' && body.website.trim() !== '') {
-    return NextResponse.json({ ok: true });
+    return NextResponse.json({ ok: true }, { headers: cors });
   }
 
   const sede = typeof body.sede === 'string' ? body.sede.trim() : '';
@@ -66,7 +69,7 @@ export async function POST(request: Request): Promise<Response> {
   if (!sede || !fullName || !email) {
     return NextResponse.json(
       { ok: false, error: 'Faltan campos obligatorios: sede, fullName y email.' },
-      { status: 400 }
+      { status: 400, headers: cors }
     );
   }
 
@@ -86,5 +89,10 @@ export async function POST(request: Request): Promise<Response> {
     }
   });
 
-  return NextResponse.json({ ok: true });
+  return NextResponse.json({ ok: true }, { headers: cors });
+}
+
+/** Preflight CORS para el POST de arriba — el navegador lo dispara solo porque mandamos JSON. */
+export async function OPTIONS(request: Request): Promise<Response> {
+  return new Response(null, { status: 204, headers: buildCorsHeaders(request.headers.get('origin')) });
 }

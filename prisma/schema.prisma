@@ -1,0 +1,39 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/// Tabla genérica de registros/leads para TODAS las sedes (Hermosillo hoy;
+/// Ensenada, Puebla, CDMX, Tijuana o cualquier sede futura mañana), no solo
+/// Hermosillo. `sede` es texto libre a propósito: agregar una sede nueva
+/// nunca debe requerir una migración de esquema.
+model Lead {
+  id     String @id @default(uuid())
+  sede   String
+  /// Canal de origen, p. ej. "formsubmit-webhook". Permite sumar otros
+  /// canales de captura después sin tocar el esquema.
+  source String @default("formsubmit-webhook")
+
+  fullName   String?
+  email      String?
+  phone      String?
+  guestCount String?
+
+  /// Campos del formulario que no se pudieron mapear a una columna conocida,
+  /// tal cual llegaron.
+  extra Json?
+
+  /// Payload completo y sin tocar del webhook — auditoría si algún mapeo
+  /// queda mal.
+  raw Json
+
+  createdAt DateTime @default(now())
+
+  @@index([sede])
+  @@index([email])
+  @@map("leads")
+}

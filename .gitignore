@@ -19,3 +19,6 @@ npm-debug.log*
 
 # prisma
 prisma/*.db
+
+# TypeScript incremental build cache
+*.tsbuildinfo

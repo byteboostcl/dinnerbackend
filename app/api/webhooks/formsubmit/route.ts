@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { checkWebhookSecret } from '@/lib/auth';
 import { pickField } from '@/lib/field-matcher';
@@ -54,8 +55,8 @@ export async function POST(request: Request): Promise<Response> {
       email,
       phone,
       guestCount,
-      extra,
-      raw: formData
+      extra: extra as Prisma.InputJsonValue | undefined,
+      raw: formData as Prisma.InputJsonValue
     }
   });
 

@@ -111,3 +111,61 @@ npm run dev
   desde ese entorno (sin acceso de red a GitHub) — el repo local se dejó
   listo (`git init` + commit) para que el push se haga desde una máquina con
   acceso real.
+
+---
+
+## Reservas (en construcción)
+
+Sustituye progresivamente al widget de TuriTop. Vive en la **misma base de
+datos** que los leads, en tablas aparte: `seasons`, `experiences`, `flights`,
+`bookings`, `tickets`, `stripe_events`.
+
+### Modelo
+
+`Season` (temporada de una ciudad) → `Experience` (lo que se vende, con su
+precio) → `Flight` (fecha, hora y 22 lugares) → `Booking` → `Ticket`.
+
+El cupo de cada vuelo se lleva en el contador `seatsTaken`, que se actualiza
+con un UPDATE condicional atómico. **No contar reservas para decidir si hay
+lugar**: eso abre una ventana de sobreventa cuando dos personas compran a la
+vez.
+
+Importes siempre en centavos; horas siempre en UTC, con la zona de la
+temporada (`timezone`) como única fuente para mostrar e interpretar — Sonora
+no cambia de horario y el resto del país sí.
+
+### Endpoints
+
+Público:
+
+- `GET /api/booking/availability?city=hermosillo` — temporada publicada con
+  sus vuelos y lugares disponibles. Solo expone `seatsLeft`.
+
+Staff (mismo `x-api-key` / `?api_key=` que los leads):
+
+- `GET  /api/admin/seasons` — temporadas con resumen.
+- `POST /api/admin/seasons` — crea temporada y experiencias. Nace en
+  borrador: no se ve en el sitio hasta publicarla.
+- `GET  /api/admin/flights?seasonId=…` o `?experienceId=…`
+- `POST /api/admin/flights` — genera los vuelos de un rango. Idempotente:
+  repetirlo no duplica nada, así que sirve para agregar un horario después.
+- `PATCH /api/admin/flights/:id` — abrir, cerrar o cambiar capacidad.
+
+Ejemplo de generación (tres semanas, de jueves a domingo, dos horarios):
+
+```bash
+curl -X POST "$API/api/admin/flights" \
+  -H "x-api-key: $ADMIN_API_KEY" -H 'Content-Type: application/json' \
+  -d '{
+    "experienceId": "…",
+    "from": "2027-03-11",
+    "to": "2027-03-29",
+    "times": ["19:30", "21:30"],
+    "weekdays": [4, 5, 6, 0]
+  }'
+```
+
+### Pendiente
+
+Stripe (apartado de lugares, sesión de pago y webhook), correos de
+confirmación, QR y validación en puerta, y el panel del staff.

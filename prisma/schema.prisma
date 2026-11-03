@@ -185,6 +185,37 @@ model PromoCode {
   @@map("promo_codes")
 }
 
+/// Plantilla de un correo automático, editable desde el panel.
+///
+/// Se guarda en base y no en el código para que el staff pueda cambiar el
+/// texto sin un despliegue — es justo lo que hacían en TuriTop, donde cada
+/// temporada tenía su propio cuerpo.
+///
+/// `seasonId` null es la plantilla general; una con temporada la sobrescribe
+/// para esa temporada. Así CDMX puede decir "Campo Marte" y Hermosillo
+/// "Parque La Ruina" sin duplicar todo el correo.
+model EmailTemplate {
+  id String @id @default(uuid())
+
+  /// Qué correo es. Hoy solo 'booking_confirmation'.
+  key String
+
+  seasonId String?
+  season   Season? @relation(fields: [seasonId], references: [id], onDelete: Cascade)
+
+  subject  String
+  bodyHtml String  @db.Text
+
+  active    Boolean @default(true)
+  updatedBy String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([key, seasonId])
+  @@map("email_templates")
+}
+
 model Season {
   id String @id @default(uuid())
 
@@ -205,7 +236,8 @@ model Season {
 
   status SeasonStatus @default(DRAFT)
 
-  experiences Experience[]
+  experiences    Experience[]
+  emailTemplates EmailTemplate[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

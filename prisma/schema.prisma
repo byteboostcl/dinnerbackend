@@ -225,19 +225,94 @@ model Experience {
   name        String
   description String?
 
-  /// Precio por persona, en centavos, impuestos incluidos.
+  /// Precio por persona del ticket base, en centavos, impuestos incluidos.
+  ///
+  /// Se conserva porque es el precio "desde" que se muestra en el sitio y el
+  /// que usan las promociones cuando no se apunta a un ticket concreto. El
+  /// precio que se cobra sale de cada TicketType.
   priceCents Int
 
   /// Orden en que se listan en el sitio.
   position Int @default(0)
 
-  flights Flight[]
+  ticketTypes TicketType[]
+  flights     Flight[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@unique([seasonId, slug])
   @@map("experiences")
+}
+
+/// Lo que se elige dentro de una experiencia.
+///
+/// Existe porque un mismo vuelo se vende en varias modalidades: menú regular,
+/// vegetariano o infantil, y antes adulto y niño con precios distintos. Sin
+/// este nivel, el precio cobrado sería siempre el mismo y habría que crear
+/// una experiencia por menú, duplicando horarios.
+///
+/// Los extras (paquete de anillo, botella, pastelito, ramo) viven aquí
+/// también, con `occupiesSeat` en false: se cobran pero no ocupan plaza en la
+/// mesa de 22.
+model TicketType {
+  id           String     @id @default(uuid())
+  experienceId String
+  experience   Experience @relation(fields: [experienceId], references: [id], onDelete: Cascade)
+
+  /// Estable: se manda a GA4 como item_variant.
+  slug String
+  name String
+  /// Aclaración que se muestra bajo el nombre ("De 6 a 12 años").
+  note String?
+
+  priceCents Int
+
+  /// false = extra. No consume asiento del vuelo, solo suma al importe.
+  occupiesSeat Boolean @default(true)
+
+  /// Límites por reserva. maxPerBooking null = sin tope propio (manda el cupo
+  /// del vuelo). El paquete de anillo, por ejemplo, va con 1.
+  minPerBooking Int  @default(0)
+  maxPerBooking Int?
+
+  /// Se puede retirar de la venta sin borrarlo: las reservas que ya lo
+  /// usaron siguen teniendo sentido.
+  active   Boolean @default(true)
+  position Int     @default(0)
+
+  items BookingItem[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([experienceId, slug])
+  @@map("ticket_types")
+}
+
+/// Línea de una reserva: qué tipo de ticket, cuántos y a qué precio.
+///
+/// El precio se copia aquí al comprar. Si mañana sube la tarifa o se retira
+/// un extra, lo que se cobró sigue siendo verificable sin arqueología.
+model BookingItem {
+  id        String  @id @default(uuid())
+  bookingId String
+  booking   Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  ticketTypeId String
+  ticketType   TicketType @relation(fields: [ticketTypeId], references: [id])
+
+  /// Nombre al momento de la compra, por si luego se renombra.
+  nameAtPurchase String
+  unitPriceCents Int
+  quantity       Int
+  /// Asientos que consumió esta línea (0 en los extras).
+  seats Int
+
+  createdAt DateTime @default(now())
+
+  @@index([bookingId])
+  @@map("booking_items")
 }
 
 model Flight {
@@ -346,6 +421,7 @@ model Booking {
   cancelledAt DateTime?
 
   tickets Ticket[]
+  items   BookingItem[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

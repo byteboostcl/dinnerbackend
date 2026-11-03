@@ -33,9 +33,19 @@ function bookingCode(): string {
   return `DITS-${code}`;
 }
 
+/** Una línea del carrito: qué se compra y cuántos. */
+export interface HoldLine {
+  ticketTypeId: string;
+  quantity: number;
+}
+
 export interface HoldRequest {
   flightId: string;
-  seats: number;
+  /**
+   * Líneas de la compra. El precio y los asientos NO vienen de aquí: se leen
+   * de la base. Lo único que decide el navegador es qué y cuánto.
+   */
+  lines: HoldLine[];
   customerName: string;
   customerEmail: string;
   customerPhone?: string | null;
@@ -56,7 +66,18 @@ export type HoldResult =
       currency: string;
       holdExpiresAt: Date;
     }
-  | { ok: false; reason: 'FLIGHT_NOT_FOUND' | 'FLIGHT_CLOSED' | 'FLIGHT_PAST' | 'NO_SEATS'; message: string };
+  | {
+      ok: false;
+      reason:
+        | 'FLIGHT_NOT_FOUND'
+        | 'FLIGHT_CLOSED'
+        | 'FLIGHT_PAST'
+        | 'NO_SEATS'
+        | 'EMPTY_CART'
+        | 'BAD_TICKET'
+        | 'LIMIT';
+      message: string;
+    };
 
 /**
  * Aparta lugares y crea la reserva en estado PENDING.
@@ -66,11 +87,15 @@ export type HoldResult =
  * ocupados por una reserva que no existe.
  */
 export async function holdSeats(request: HoldRequest): Promise<HoldResult> {
-  const { flightId, seats } = request;
+  const { flightId } = request;
 
   const flight = await prisma.flight.findUnique({
     where: { id: flightId },
-    include: { experience: { include: { season: true } } }
+    include: {
+      experience: {
+        include: { season: true, ticketTypes: { where: { active: true } } }
+      }
+    }
   });
 
   if (!flight) {
@@ -83,7 +108,39 @@ export async function holdSeats(request: HoldRequest): Promise<HoldResult> {
     return { ok: false, reason: 'FLIGHT_PAST', message: 'Ese vuelo ya salió.' };
   }
 
-  const subtotalCents = flight.experience.priceCents * seats;
+  // Se arma el carrito contra la base: precios, asientos y límites salen de
+  // los tipos de ticket, nunca del navegador.
+  const lineas: { ticketType: (typeof flight.experience.ticketTypes)[number]; quantity: number }[] = [];
+
+  for (const linea of request.lines ?? []) {
+    if (!Number.isInteger(linea.quantity) || linea.quantity <= 0) {
+      continue;
+    }
+    const ticketType = flight.experience.ticketTypes.find(t => t.id === linea.ticketTypeId);
+    if (!ticketType) {
+      return { ok: false, reason: 'BAD_TICKET', message: 'Uno de los boletos elegidos ya no está disponible.' };
+    }
+    if (ticketType.maxPerBooking !== null && linea.quantity > ticketType.maxPerBooking) {
+      return {
+        ok: false,
+        reason: 'LIMIT',
+        message: `Solo se puede agregar ${ticketType.maxPerBooking} de "${ticketType.name}" por reserva.`
+      };
+    }
+    lineas.push({ ticketType, quantity: linea.quantity });
+  }
+
+  if (lineas.length === 0) {
+    return { ok: false, reason: 'EMPTY_CART', message: 'No elegiste ningún boleto.' };
+  }
+
+  // Solo los tickets que ocupan asiento consumen cupo; los extras no.
+  const seats = lineas.reduce((total, l) => total + (l.ticketType.occupiesSeat ? l.quantity : 0), 0);
+  if (seats === 0) {
+    return { ok: false, reason: 'EMPTY_CART', message: 'Agrega al menos un lugar para la mesa.' };
+  }
+
+  const subtotalCents = lineas.reduce((total, l) => total + l.ticketType.priceCents * l.quantity, 0);
   const currency = flight.experience.season.currency;
   const holdExpiresAt = new Date(Date.now() + HOLD_MINUTES * 60_000);
 
@@ -98,7 +155,7 @@ export async function holdSeats(request: HoldRequest): Promise<HoldResult> {
   if (request.promoCode) {
     const promo = await applyPromo(request.promoCode, {
       seats,
-      unitPriceCents: flight.experience.priceCents,
+      unitPriceCents: Math.round(subtotalCents / seats),
       seasonId: flight.experience.seasonId,
       experienceId: flight.experienceId
     });
@@ -146,7 +203,16 @@ export async function holdSeats(request: HoldRequest): Promise<HoldResult> {
           currency,
           status: 'PENDING',
           holdExpiresAt,
-          invoiceRequested: request.invoiceRequested ?? false
+          invoiceRequested: request.invoiceRequested ?? false,
+          items: {
+            create: lineas.map(l => ({
+              ticketTypeId: l.ticketType.id,
+              nameAtPurchase: l.ticketType.name,
+              unitPriceCents: l.ticketType.priceCents,
+              quantity: l.quantity,
+              seats: l.ticketType.occupiesSeat ? l.quantity : 0
+            }))
+          }
         }
       });
 

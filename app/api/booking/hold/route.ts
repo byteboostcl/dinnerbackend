@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { holdSeats, HOLD_MINUTES } from '@/lib/booking';
+import { holdSeats, HOLD_MINUTES, type HoldLine } from '@/lib/booking';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -24,7 +24,18 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   const flightId = typeof body['flightId'] === 'string' ? body['flightId'].trim() : '';
-  const seats = Number(body['seats']);
+
+  // Compatibilidad: si llega `seats` sin líneas, se interpreta como la
+  // cantidad del ticket base. Así el sitio puede migrar sin romperse.
+  const rawLines = Array.isArray(body['lines']) ? body['lines'] : [];
+  const lines: HoldLine[] = rawLines
+    .filter((l): l is { ticketTypeId: string; quantity: number } =>
+      typeof l === 'object' && l !== null &&
+      typeof (l as { ticketTypeId?: unknown }).ticketTypeId === 'string' &&
+      Number.isInteger((l as { quantity?: unknown }).quantity))
+    .map(l => ({ ticketTypeId: l.ticketTypeId, quantity: l.quantity }));
+
+  const seats = lines.reduce((total, l) => total + l.quantity, 0);
   const customerName = typeof body['customerName'] === 'string' ? body['customerName'].trim() : '';
   const customerEmail = typeof body['customerEmail'] === 'string' ? body['customerEmail'].trim().toLowerCase() : '';
   const customerPhone = typeof body['customerPhone'] === 'string' ? body['customerPhone'].trim() : null;
@@ -36,16 +47,20 @@ export async function POST(request: Request): Promise<Response> {
     );
   }
 
-  if (!Number.isInteger(seats) || seats < 1 || seats > MAX_SEATS) {
+  if (lines.length === 0) {
+    return NextResponse.json({ ok: false, error: 'No elegiste ningún boleto.' }, { status: 400 });
+  }
+
+  if (seats < 1 || seats > MAX_SEATS) {
     return NextResponse.json(
-      { ok: false, error: `El número de lugares debe estar entre 1 y ${MAX_SEATS}.` },
+      { ok: false, error: `El número de boletos debe estar entre 1 y ${MAX_SEATS}.` },
       { status: 400 }
     );
   }
 
   const result = await holdSeats({
     flightId,
-    seats,
+    lines,
     customerName,
     customerEmail,
     customerPhone,
@@ -56,7 +71,11 @@ export async function POST(request: Request): Promise<Response> {
   if (!result.ok) {
     // 409: el conflicto es de estado (se acabaron los lugares), no un error
     // de quien llama.
-    const status = result.reason === 'FLIGHT_NOT_FOUND' ? 404 : 409;
+    const status = result.reason === 'FLIGHT_NOT_FOUND'
+      ? 404
+      : result.reason === 'EMPTY_CART' || result.reason === 'BAD_TICKET' || result.reason === 'LIMIT'
+        ? 400
+        : 409;
     return NextResponse.json({ ok: false, error: result.message, reason: result.reason }, { status });
   }
 

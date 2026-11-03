@@ -45,6 +45,7 @@ export async function GET(request: Request): Promise<Response> {
       experiences: {
         orderBy: { position: 'asc' },
         include: {
+          ticketTypes: { where: { active: true }, orderBy: { position: 'asc' } },
           flights: {
             // Un vuelo que ya despegó no se vende, y uno cerrado a mano
             // tampoco debe aparecer con lugares disponibles.
@@ -79,6 +80,16 @@ export async function GET(request: Request): Promise<Response> {
         name: experience.name,
         description: experience.description,
         priceCents: experience.priceCents,
+        ticketTypes: experience.ticketTypes.map(t => ({
+          id: t.id,
+          slug: t.slug,
+          name: t.name,
+          note: t.note,
+          priceCents: t.priceCents,
+          occupiesSeat: t.occupiesSeat,
+          minPerBooking: t.minPerBooking,
+          maxPerBooking: t.maxPerBooking
+        })),
         flights: experience.flights.map(flight => {
           const seatsLeft = Math.max(0, flight.capacity - flight.seatsTaken);
           return {

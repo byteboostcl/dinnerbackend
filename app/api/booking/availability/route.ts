@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
+import { releaseExpiredHolds } from '@/lib/booking';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -31,6 +32,11 @@ export async function GET(request: Request): Promise<Response> {
       { status: 400 }
     );
   }
+
+  // Antes de informar lugares, se devuelven los de los carritos abandonados.
+  // Este hosting no tiene tareas programadas, así que la limpieza viaja con
+  // la consulta que más se llama.
+  await releaseExpiredHolds();
 
   const season = await prisma.season.findFirst({
     where: { citySlug: city, status: 'PUBLISHED' },

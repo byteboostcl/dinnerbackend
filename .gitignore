@@ -22,3 +22,7 @@ prisma/*.db
 
 # TypeScript incremental build cache
 *.tsbuildinfo
+
+# Respaldos de leads: traen datos personales de gente real, nunca al repo.
+*.xlsx
+*.csv

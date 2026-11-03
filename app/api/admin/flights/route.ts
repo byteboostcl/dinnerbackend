@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { checkApiKey } from '@/lib/auth';
+import { requireStaff } from '@/lib/auth';
 import { zonedTimeToUtc, zonedWeekday } from '@/lib/timezone';
 
 export const runtime = 'nodejs';
@@ -16,9 +16,9 @@ export const dynamic = 'force-dynamic';
 
 /** GET /api/admin/flights?experienceId=...  — con ocupación de cada vuelo. */
 export async function GET(request: Request): Promise<Response> {
-  const authError = checkApiKey(request);
-  if (authError) {
-    return NextResponse.json({ ok: false, error: authError }, { status: 401 });
+  const auth = await requireStaff(request);
+  if ('error' in auth) {
+    return NextResponse.json({ ok: false, error: auth.error }, { status: 401 });
   }
 
   const { searchParams } = new URL(request.url);
@@ -72,9 +72,9 @@ const MAX_FLIGHTS = 500;
  * que ya vendieron.
  */
 export async function POST(request: Request): Promise<Response> {
-  const authError = checkApiKey(request);
-  if (authError) {
-    return NextResponse.json({ ok: false, error: authError }, { status: 401 });
+  const auth = await requireStaff(request);
+  if ('error' in auth) {
+    return NextResponse.json({ ok: false, error: auth.error }, { status: 401 });
   }
 
   let body: GenerateInput;

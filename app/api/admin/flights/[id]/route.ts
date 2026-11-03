@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { checkApiKey } from '@/lib/auth';
+import { requireStaff } from '@/lib/auth';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -30,9 +30,9 @@ export async function PATCH(
   request: Request,
   context: { params: Promise<{ id: string }> }
 ): Promise<Response> {
-  const authError = checkApiKey(request);
-  if (authError) {
-    return NextResponse.json({ ok: false, error: authError }, { status: 401 });
+  const auth = await requireStaff(request);
+  if ('error' in auth) {
+    return NextResponse.json({ ok: false, error: auth.error }, { status: 401 });
   }
 
   const { id } = await context.params;

@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { checkApiKey } from '@/lib/auth';
+import { requireStaff } from '@/lib/auth';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -16,9 +16,9 @@ export const dynamic = 'force-dynamic';
 
 /** GET: todas las temporadas con un resumen de ocupación. */
 export async function GET(request: Request): Promise<Response> {
-  const authError = checkApiKey(request);
-  if (authError) {
-    return NextResponse.json({ ok: false, error: authError }, { status: 401 });
+  const auth = await requireStaff(request);
+  if ('error' in auth) {
+    return NextResponse.json({ ok: false, error: auth.error }, { status: 401 });
   }
 
   const seasons = await prisma.season.findMany({
@@ -63,9 +63,9 @@ const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
  * esa operación sin volver a tocar precios ni nombres.
  */
 export async function POST(request: Request): Promise<Response> {
-  const authError = checkApiKey(request);
-  if (authError) {
-    return NextResponse.json({ ok: false, error: authError }, { status: 401 });
+  const auth = await requireStaff(request);
+  if ('error' in auth) {
+    return NextResponse.json({ ok: false, error: auth.error }, { status: 401 });
   }
 
   let body: SeasonInput;

@@ -1,0 +1,142 @@
+/* Panel del staff. Paleta y tipografía del sitio público, para que Joan
+   sienta que es la misma marca y no una herramienta ajena. */
+
+.adm {
+  --azul: #0d2545;
+  --azul-medio: #3d6a95;
+  --azul-claro: #f3f7ff;
+  --amarillo: #f9ca58;
+  --rojo: #c3163f;
+  --verde: #1a7f52;
+  --borde: rgba(13, 37, 69, 0.12);
+
+  min-height: 100vh;
+  background: #f6f9fd;
+  color: var(--azul);
+  font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  font-size: 15px;
+  line-height: 1.55;
+}
+
+.adm * { box-sizing: border-box; }
+
+.adm__bar {
+  background: var(--azul);
+  color: #fff;
+  padding: 14px 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.adm__brand { font-weight: 800; letter-spacing: 0.1em; text-transform: uppercase; font-size: 13px; }
+.adm__who { font-size: 13px; color: rgba(255, 255, 255, 0.72); }
+
+.adm__main { max-width: 1100px; margin: 0 auto; padding: 28px 24px 72px; }
+
+.adm h1 { font-size: 26px; font-weight: 800; margin: 0 0 4px; }
+.adm h2 { font-size: 17px; font-weight: 700; margin: 0 0 12px; }
+.adm__sub { color: var(--azul-medio); margin: 0 0 24px; font-size: 14px; }
+
+.adm__card {
+  background: #fff;
+  border: 1px solid var(--borde);
+  border-radius: 14px;
+  padding: 20px 22px;
+  margin-bottom: 18px;
+}
+
+.adm__row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.adm__spacer { flex: 1; }
+
+/* Estado de la temporada */
+.adm__chip {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 4px 10px;
+  border-radius: 999px;
+}
+.adm__chip--draft { background: #eef2f8; color: var(--azul-medio); }
+.adm__chip--published { background: rgba(26, 127, 82, 0.12); color: var(--verde); }
+.adm__chip--closed { background: rgba(195, 22, 63, 0.1); color: var(--rojo); }
+
+/* Botones */
+.adm__btn {
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  padding: 9px 18px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: background 0.2s, border-color 0.2s, color 0.2s;
+}
+.adm__btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.adm__btn--primary { background: var(--azul); color: #fff; }
+.adm__btn--primary:hover:not(:disabled) { background: #082848; }
+.adm__btn--ghost { background: transparent; color: var(--azul); border-color: var(--borde); }
+.adm__btn--ghost:hover:not(:disabled) { border-color: var(--azul-medio); }
+.adm__btn--danger { background: transparent; color: var(--rojo); border-color: rgba(195, 22, 63, 0.35); }
+.adm__btn--danger:hover:not(:disabled) { background: rgba(195, 22, 63, 0.07); }
+.adm__btn--sm { padding: 5px 12px; font-size: 12px; }
+
+/* Formularios */
+.adm__field { display: block; margin-bottom: 14px; }
+.adm__label { display: block; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--azul-medio); margin-bottom: 6px; }
+.adm__input {
+  font: inherit;
+  width: 100%;
+  padding: 11px 14px;
+  border: 1px solid var(--borde);
+  border-radius: 10px;
+  background: #fff;
+  color: var(--azul);
+}
+.adm__input:focus { outline: 2px solid rgba(30, 99, 198, 0.35); outline-offset: 1px; }
+.adm__input--seats { width: 74px; padding: 6px 10px; text-align: center; }
+
+/* Tabla de vuelos */
+.adm__table { width: 100%; border-collapse: collapse; font-size: 14px; }
+.adm__table th {
+  text-align: left;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--azul-medio);
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--borde);
+  white-space: nowrap;
+}
+.adm__table td { padding: 9px 10px; border-bottom: 1px solid rgba(13, 37, 69, 0.07); vertical-align: middle; }
+.adm__table tr:hover td { background: var(--azul-claro); }
+.adm__day { font-weight: 700; text-transform: capitalize; }
+.adm__time { font-variant-numeric: tabular-nums; }
+
+/* Ocupación */
+.adm__occ { display: flex; align-items: center; gap: 8px; min-width: 130px; }
+.adm__bar-track { flex: 1; height: 6px; background: #e6ecf5; border-radius: 999px; overflow: hidden; }
+.adm__bar-fill { height: 100%; background: var(--verde); }
+.adm__bar-fill--full { background: var(--rojo); }
+.adm__occ-text { font-size: 12px; color: var(--azul-medio); font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+.adm__muted { color: var(--azul-medio); font-size: 13px; }
+
+/* Avisos */
+.adm__msg { padding: 12px 16px; border-radius: 10px; margin-bottom: 16px; font-size: 14px; }
+.adm__msg--error { background: rgba(195, 22, 63, 0.08); color: var(--rojo); }
+.adm__msg--ok { background: rgba(26, 127, 82, 0.1); color: var(--verde); }
+.adm__msg--warn { background: rgba(249, 202, 88, 0.22); color: #7a5a06; }
+
+/* Login */
+.adm__login { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px; }
+.adm__login-card { width: 100%; max-width: 380px; background: #fff; border: 1px solid var(--borde); border-radius: 18px; padding: 32px 30px; }
+
+@media (max-width: 720px) {
+  .adm__main { padding: 20px 16px 60px; }
+  .adm__table th:nth-child(4), .adm__table td:nth-child(4) { display: none; }
+}

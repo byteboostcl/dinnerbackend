@@ -65,5 +65,7 @@ function applyCorsHeaders(response: NextResponse, origin: string): void {
 }
 
 export const config = {
+  // Solo la API: el panel (/admin) se sirve desde el mismo origen y no
+  // necesita CORS.
   matcher: '/api/:path*'
 };

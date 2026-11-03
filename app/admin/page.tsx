@@ -23,6 +23,7 @@ export default async function AdminHome() {
       experiences: {
         orderBy: { position: 'asc' },
         include: {
+          ticketTypes: { orderBy: [{ occupiesSeat: 'desc' }, { position: 'asc' }] },
           flights: {
             orderBy: { startsAt: 'asc' },
             include: { _count: { select: { bookings: true } } }
@@ -46,6 +47,15 @@ export default async function AdminHome() {
       name: experience.name,
       slug: experience.slug,
       priceCents: experience.priceCents,
+      ticketTypes: experience.ticketTypes.map(t => ({
+        id: t.id,
+        name: t.name,
+        note: t.note,
+        priceCents: t.priceCents,
+        occupiesSeat: t.occupiesSeat,
+        maxPerBooking: t.maxPerBooking,
+        active: t.active
+      })),
       flights: experience.flights.map(flight => ({
         id: flight.id,
         startsAt: flight.startsAt.toISOString(),
@@ -57,5 +67,23 @@ export default async function AdminHome() {
     }))
   }));
 
-  return <AdminPanel seasons={data} user={{ email: session.email, role: session.role }} />;
+  const promos = await prisma.promoCode.findMany({ orderBy: { createdAt: 'desc' }, take: 100 });
+
+  return (
+    <AdminPanel
+      seasons={data}
+      promos={promos.map(p => ({
+        id: p.id,
+        code: p.code,
+        description: p.description,
+        kind: p.kind,
+        value: p.value,
+        maxRedemptions: p.maxRedemptions,
+        timesRedeemed: p.timesRedeemed,
+        validUntil: p.validUntil ? p.validUntil.toISOString() : null,
+        active: p.active
+      }))}
+      user={{ email: session.email, role: session.role }}
+    />
+  );
 }

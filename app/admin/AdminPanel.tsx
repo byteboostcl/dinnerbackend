@@ -27,11 +27,34 @@ interface FlightView {
   bookings: number;
 }
 
+interface TicketTypeView {
+  id: string;
+  name: string;
+  note: string | null;
+  priceCents: number;
+  occupiesSeat: boolean;
+  maxPerBooking: number | null;
+  active: boolean;
+}
+
+interface PromoView {
+  id: string;
+  code: string;
+  description: string | null;
+  kind: string;
+  value: number;
+  maxRedemptions: number | null;
+  timesRedeemed: number;
+  validUntil: string | null;
+  active: boolean;
+}
+
 interface ExperienceView {
   id: string;
   name: string;
   slug: string;
   priceCents: number;
+  ticketTypes: TicketTypeView[];
   flights: FlightView[];
 }
 
@@ -51,17 +74,27 @@ const STATUS_LABEL: Record<string, string> = {
   CLOSED: 'Cerrada'
 };
 
+const KIND_LABEL: Record<string, string> = {
+  PERCENT: 'Porcentaje',
+  FIXED: 'Monto fijo',
+  FREE_SEATS: 'Boletos gratis',
+  FULL_COMP: 'Cortesía'
+};
+
 export function AdminPanel({
   seasons,
+  promos,
   user
 }: {
   seasons: SeasonView[];
+  promos: PromoView[];
   user: { email: string; role: string };
 }) {
   const router = useRouter();
   const [seasonId, setSeasonId] = useState(seasons[0]?.id ?? '');
   const [message, setMessage] = useState<{ kind: 'ok' | 'error' | 'warn'; text: string } | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [tab, setTab] = useState<'vuelos' | 'boletos' | 'promos'>('vuelos');
 
   const season = useMemo(() => seasons.find(item => item.id === seasonId), [seasons, seasonId]);
 
@@ -179,7 +212,29 @@ export function AdminPanel({
               )}
             </div>
 
-            {season?.experiences.map(experience => (
+            <div className="adm__row" style={{ margin: '4px 0 16px' }}>
+              {([
+                ['vuelos', 'Vuelos'],
+                ['boletos', 'Boletos y extras'],
+                ['promos', 'Promociones']
+              ] as const).map(([clave, etiqueta]) => (
+                <button
+                  key={clave}
+                  className={`adm__btn ${tab === clave ? 'adm__btn--primary' : 'adm__btn--ghost'}`}
+                  onClick={() => setTab(clave)}
+                >
+                  {etiqueta}
+                </button>
+              ))}
+            </div>
+
+            {tab === 'promos' && <PromosPanel promos={promos} onDone={() => router.refresh()} />}
+
+            {tab === 'boletos' && season?.experiences.map(experience => (
+              <TicketsCard key={experience.id} experience={experience} currency={season.currency} onDone={() => router.refresh()} />
+            ))}
+
+            {tab === 'vuelos' && season?.experiences.map(experience => (
               <ExperienceCard
                 key={experience.id}
                 experience={experience}
@@ -196,6 +251,7 @@ export function AdminPanel({
                     status === 'SCHEDULED' ? 'Vuelo abierto.' : 'Vuelo cerrado.'
                   )
                 }
+                onCreated={() => router.refresh()}
               />
             ))}
           </>
@@ -211,7 +267,8 @@ function ExperienceCard({
   currency,
   busyId,
   onSeats,
-  onStatus
+  onStatus,
+  onCreated
 }: {
   experience: ExperienceView;
   timezone: string;
@@ -219,7 +276,9 @@ function ExperienceCard({
   busyId: string | null;
   onSeats: (flight: FlightView, capacity: number) => void;
   onStatus: (flight: FlightView, status: string) => void;
+  onCreated: () => void;
 }) {
+  const [abrirAlta, setAbrirAlta] = useState(false);
   const price = (experience.priceCents / 100).toLocaleString('es-MX', { style: 'currency', currency });
   const totalSeats = experience.flights.reduce((sum, flight) => sum + flight.capacity, 0);
   const takenSeats = experience.flights.reduce((sum, flight) => sum + flight.seatsTaken, 0);
@@ -233,7 +292,12 @@ function ExperienceCard({
         <span className="adm__muted">
           {takenSeats} / {totalSeats} lugares vendidos
         </span>
+        <button className="adm__btn adm__btn--ghost adm__btn--sm" onClick={() => setAbrirAlta(v => !v)}>
+          {abrirAlta ? 'Cancelar' : '+ Agregar horarios'}
+        </button>
       </div>
+
+      {abrirAlta && <NuevoHorario experienceId={experience.id} onDone={onCreated} />}
 
       <div style={{ overflowX: 'auto' }}>
         <table className="adm__table">
@@ -355,5 +419,427 @@ function FlightRow({
         </button>
       </td>
     </tr>
+  );
+}
+
+/**
+ * Boletos y extras de una experiencia.
+ *
+ * Un extra es un boleto que no ocupa asiento: se cobra pero no consume plaza
+ * de la mesa de 22. Así están modelados el paquete de anillo, la botella o
+ * el pastelito.
+ */
+function TicketsCard({
+  experience,
+  currency,
+  onDone
+}: {
+  experience: ExperienceView;
+  currency: string;
+  onDone: () => void;
+}) {
+  const [nombre, setNombre] = useState('');
+  const [precio, setPrecio] = useState('');
+  const [ocupaAsiento, setOcupaAsiento] = useState(true);
+  const [maximo, setMaximo] = useState('');
+  const [msg, setMsg] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
+  const [enviando, setEnviando] = useState(false);
+
+  const precioTexto = (cents: number) =>
+    (cents / 100).toLocaleString('es-MX', { style: 'currency', currency, maximumFractionDigits: 0 });
+
+  async function crear() {
+    const pesos = Number(precio);
+    if (!nombre.trim() || !Number.isFinite(pesos) || pesos < 0) {
+      setMsg({ kind: 'error', text: 'Hace falta nombre y precio.' });
+      return;
+    }
+
+    setEnviando(true);
+    setMsg(null);
+
+    const response = await fetch('/api/admin/ticket-types', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        experienceId: experience.id,
+        name: nombre.trim(),
+        // El panel pide pesos y aquí se convierte: la base siempre centavos.
+        priceCents: Math.round(pesos * 100),
+        occupiesSeat: ocupaAsiento,
+        maxPerBooking: maximo ? Number(maximo) : null
+      })
+    });
+    const payload = await response.json();
+
+    if (!response.ok) {
+      setMsg({ kind: 'error', text: String(payload.error ?? 'No se pudo crear.') });
+    } else {
+      setNombre('');
+      setPrecio('');
+      setMaximo('');
+      setMsg({ kind: 'ok', text: 'Listo.' });
+      onDone();
+    }
+    setEnviando(false);
+  }
+
+  async function alternar(ticket: TicketTypeView) {
+    await fetch(`/api/admin/ticket-types/${ticket.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ active: !ticket.active })
+    });
+    onDone();
+  }
+
+  const boletos = experience.ticketTypes.filter(t => t.occupiesSeat);
+  const extras = experience.ticketTypes.filter(t => !t.occupiesSeat);
+
+  return (
+    <div className="adm__card">
+      <h2>{experience.name}</h2>
+
+      {msg && <div className={`adm__msg adm__msg--${msg.kind}`}>{msg.text}</div>}
+
+      {experience.ticketTypes.length === 0 && (
+        <p className="adm__muted">
+          Todavía no hay boletos. Mientras no exista al menos uno, esta experiencia no se puede vender.
+        </p>
+      )}
+
+      {[
+        { titulo: 'Boletos (ocupan lugar)', lista: boletos },
+        { titulo: 'Extras (no ocupan lugar)', lista: extras }
+      ].map(grupo =>
+        grupo.lista.length > 0 ? (
+          <div key={grupo.titulo} style={{ marginBottom: 14 }}>
+            <p className="adm__muted" style={{ fontWeight: 700, marginBottom: 6 }}>{grupo.titulo}</p>
+            <table className="adm__table">
+              <tbody>
+                {grupo.lista.map(ticket => (
+                  <tr key={ticket.id} style={ticket.active ? undefined : { opacity: 0.5 }}>
+                    <td>
+                      {ticket.name}
+                      {ticket.note && <div className="adm__muted">{ticket.note}</div>}
+                    </td>
+                    <td style={{ whiteSpace: 'nowrap' }}>{precioTexto(ticket.priceCents)}</td>
+                    <td className="adm__muted">{ticket.maxPerBooking ? `máx ${ticket.maxPerBooking}` : '—'}</td>
+                    <td style={{ textAlign: 'right' }}>
+                      <button className="adm__btn adm__btn--ghost adm__btn--sm" onClick={() => alternar(ticket)}>
+                        {ticket.active ? 'Retirar' : 'Reactivar'}
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : null
+      )}
+
+      <div className="adm__row" style={{ borderTop: '1px solid var(--borde)', paddingTop: 14 }}>
+        <input
+          className="adm__input"
+          style={{ flex: 2, minWidth: 180 }}
+          placeholder="Nombre (Menú vegetariano, Botella…)"
+          value={nombre}
+          onChange={e => setNombre(e.target.value)}
+        />
+        <input
+          className="adm__input"
+          style={{ width: 120 }}
+          type="number"
+          placeholder="Precio"
+          value={precio}
+          onChange={e => setPrecio(e.target.value)}
+        />
+        <label className="adm__row" style={{ gap: 6 }}>
+          <input type="checkbox" checked={ocupaAsiento} onChange={e => setOcupaAsiento(e.target.checked)} />
+          <span className="adm__muted">Ocupa lugar</span>
+        </label>
+        {!ocupaAsiento && (
+          <input
+            className="adm__input"
+            style={{ width: 110 }}
+            type="number"
+            placeholder="Máx."
+            value={maximo}
+            onChange={e => setMaximo(e.target.value)}
+          />
+        )}
+        <button className="adm__btn adm__btn--primary" disabled={enviando} onClick={crear}>
+          {enviando ? 'Agregando…' : 'Agregar'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** Códigos promocionales. */
+function PromosPanel({ promos, onDone }: { promos: PromoView[]; onDone: () => void }) {
+  const [code, setCode] = useState('');
+  const [kind, setKind] = useState('PERCENT');
+  const [value, setValue] = useState('');
+  const [maxRedemptions, setMaxRedemptions] = useState('');
+  const [validUntil, setValidUntil] = useState('');
+  const [msg, setMsg] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
+  const [enviando, setEnviando] = useState(false);
+
+  async function crear() {
+    setEnviando(true);
+    setMsg(null);
+
+    const esMonto = kind === 'FIXED';
+    const response = await fetch('/api/admin/promos', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        code,
+        kind,
+        // El monto fijo se teclea en pesos y se guarda en centavos.
+        value: esMonto ? Math.round(Number(value) * 100) : Number(value),
+        maxRedemptions: maxRedemptions ? Number(maxRedemptions) : null,
+        validUntil: validUntil || null
+      })
+    });
+    const payload = await response.json();
+
+    if (!response.ok) {
+      setMsg({ kind: 'error', text: String(payload.error ?? 'No se pudo crear.') });
+    } else {
+      setCode('');
+      setValue('');
+      setMaxRedemptions('');
+      setValidUntil('');
+      setMsg({ kind: 'ok', text: 'Código creado.' });
+      onDone();
+    }
+    setEnviando(false);
+  }
+
+  async function alternar(promo: PromoView) {
+    await fetch(`/api/admin/promos/${promo.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ active: !promo.active })
+    });
+    onDone();
+  }
+
+  return (
+    <div className="adm__card">
+      <h2>Promociones</h2>
+
+      {msg && <div className={`adm__msg adm__msg--${msg.kind}`}>{msg.text}</div>}
+
+      <div className="adm__row" style={{ marginBottom: 16 }}>
+        <input
+          className="adm__input"
+          style={{ width: 170, textTransform: 'uppercase' }}
+          placeholder="CÓDIGO"
+          value={code}
+          onChange={e => setCode(e.target.value)}
+        />
+        <select className="adm__input" style={{ width: 'auto' }} value={kind} onChange={e => setKind(e.target.value)}>
+          <option value="PERCENT">Porcentaje</option>
+          <option value="FIXED">Monto fijo</option>
+          <option value="FREE_SEATS">Boletos gratis</option>
+          <option value="FULL_COMP">Cortesía 100%</option>
+        </select>
+        {kind !== 'FULL_COMP' && (
+          <input
+            className="adm__input"
+            style={{ width: 110 }}
+            type="number"
+            placeholder={kind === 'PERCENT' ? '%' : kind === 'FIXED' ? 'Pesos' : 'Gratis'}
+            value={value}
+            onChange={e => setValue(e.target.value)}
+          />
+        )}
+        <input
+          className="adm__input"
+          style={{ width: 110 }}
+          type="number"
+          placeholder="Usos"
+          value={maxRedemptions}
+          onChange={e => setMaxRedemptions(e.target.value)}
+        />
+        <input
+          className="adm__input"
+          style={{ width: 150 }}
+          type="date"
+          value={validUntil}
+          onChange={e => setValidUntil(e.target.value)}
+        />
+        <button className="adm__btn adm__btn--primary" disabled={enviando} onClick={crear}>
+          {enviando ? 'Creando…' : 'Crear'}
+        </button>
+      </div>
+
+      {kind === 'FULL_COMP' && (
+        <p className="adm__muted" style={{ marginTop: -8, marginBottom: 14 }}>
+          Una cortesía deja la reserva en cero. Es obligatorio ponerle un límite de usos.
+        </p>
+      )}
+
+      {promos.length === 0 ? (
+        <p className="adm__muted">Todavía no hay códigos.</p>
+      ) : (
+        <div style={{ overflowX: 'auto' }}>
+          <table className="adm__table">
+            <thead>
+              <tr>
+                <th>Código</th>
+                <th>Tipo</th>
+                <th>Valor</th>
+                <th>Usos</th>
+                <th>Vence</th>
+                <th />
+              </tr>
+            </thead>
+            <tbody>
+              {promos.map(promo => (
+                <tr key={promo.id} style={promo.active ? undefined : { opacity: 0.5 }}>
+                  <td style={{ fontWeight: 700 }}>{promo.code}</td>
+                  <td className="adm__muted">{KIND_LABEL[promo.kind] ?? promo.kind}</td>
+                  <td>
+                    {promo.kind === 'PERCENT' && `${promo.value}%`}
+                    {promo.kind === 'FIXED' && `$${(promo.value / 100).toLocaleString('es-MX')}`}
+                    {promo.kind === 'FREE_SEATS' && `${promo.value} gratis`}
+                    {promo.kind === 'FULL_COMP' && '100%'}
+                  </td>
+                  <td className="adm__muted">
+                    {promo.timesRedeemed}
+                    {promo.maxRedemptions !== null ? ` / ${promo.maxRedemptions}` : ''}
+                  </td>
+                  <td className="adm__muted">
+                    {promo.validUntil ? new Date(promo.validUntil).toLocaleDateString('es-MX') : 'sin fecha'}
+                  </td>
+                  <td style={{ textAlign: 'right' }}>
+                    <button className="adm__btn adm__btn--ghost adm__btn--sm" onClick={() => alternar(promo)}>
+                      {promo.active ? 'Desactivar' : 'Activar'}
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Alta de horarios: rango de fechas, días de la semana y horas.
+ *
+ * Es masiva porque una temporada son decenas de vuelos y crearlos uno a uno
+ * garantiza erratas. Repetir la operación no duplica nada: el par
+ * experiencia + instante es único en la base, así que se puede volver a
+ * correr para sumar un horario sin tocar lo ya vendido.
+ */
+function NuevoHorario({ experienceId, onDone }: { experienceId: string; onDone: () => void }) {
+  const [desde, setDesde] = useState('');
+  const [hasta, setHasta] = useState('');
+  const [horas, setHoras] = useState('');
+  const [dias, setDias] = useState<number[]>([4, 5, 6, 0]);
+  const [capacidad, setCapacidad] = useState('22');
+  const [msg, setMsg] = useState<{ kind: 'ok' | 'error' | 'warn'; text: string } | null>(null);
+  const [enviando, setEnviando] = useState(false);
+
+  const DIAS = [
+    [1, 'Lun'], [2, 'Mar'], [3, 'Mié'], [4, 'Jue'], [5, 'Vie'], [6, 'Sáb'], [0, 'Dom']
+  ] as const;
+
+  async function crear() {
+    const times = horas.split(',').map(h => h.trim()).filter(Boolean);
+    if (!desde || !hasta || times.length === 0) {
+      setMsg({ kind: 'error', text: 'Hacen falta fechas y al menos un horario.' });
+      return;
+    }
+
+    setEnviando(true);
+    setMsg(null);
+
+    const response = await fetch('/api/admin/flights', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        experienceId,
+        from: desde,
+        to: hasta,
+        times,
+        weekdays: dias,
+        capacity: Number(capacidad) || 22
+      })
+    });
+    const payload = await response.json();
+
+    if (!response.ok) {
+      setMsg({ kind: 'error', text: String(payload.error ?? 'No se pudieron crear.') });
+    } else {
+      const creados = payload.created as number;
+      const repetidos = payload.skipped as number;
+      setMsg({
+        kind: creados === 0 ? 'warn' : 'ok',
+        text:
+          creados === 0
+            ? `No se creó ninguno: los ${repetidos} horarios ya existían.`
+            : `${creados} vuelos creados${repetidos ? ` (${repetidos} ya existían)` : ''}.`
+      });
+      onDone();
+    }
+    setEnviando(false);
+  }
+
+  return (
+    <div style={{ background: 'var(--azul-claro)', borderRadius: 12, padding: 16, marginBottom: 16 }}>
+      {msg && <div className={`adm__msg adm__msg--${msg.kind}`}>{msg.text}</div>}
+
+      <div className="adm__row" style={{ marginBottom: 12 }}>
+        <label className="adm__row" style={{ gap: 6 }}>
+          <span className="adm__muted">Del</span>
+          <input className="adm__input" style={{ width: 160 }} type="date" value={desde} onChange={e => setDesde(e.target.value)} />
+        </label>
+        <label className="adm__row" style={{ gap: 6 }}>
+          <span className="adm__muted">al</span>
+          <input className="adm__input" style={{ width: 160 }} type="date" value={hasta} onChange={e => setHasta(e.target.value)} />
+        </label>
+        <label className="adm__row" style={{ gap: 6 }}>
+          <span className="adm__muted">Lugares</span>
+          <input className="adm__input" style={{ width: 80 }} type="number" value={capacidad} onChange={e => setCapacidad(e.target.value)} />
+        </label>
+      </div>
+
+      <div className="adm__row" style={{ marginBottom: 12 }}>
+        <span className="adm__muted">Días</span>
+        {DIAS.map(([valor, etiqueta]) => (
+          <button
+            key={valor}
+            className={`adm__btn adm__btn--sm ${dias.includes(valor) ? 'adm__btn--primary' : 'adm__btn--ghost'}`}
+            onClick={() => setDias(d => (d.includes(valor) ? d.filter(x => x !== valor) : [...d, valor]))}
+          >
+            {etiqueta}
+          </button>
+        ))}
+      </div>
+
+      <div className="adm__row">
+        <input
+          className="adm__input"
+          style={{ flex: 1, minWidth: 200 }}
+          placeholder="Horarios separados por coma: 17:30, 19:30, 21:30"
+          value={horas}
+          onChange={e => setHoras(e.target.value)}
+        />
+        <button className="adm__btn adm__btn--primary" disabled={enviando} onClick={crear}>
+          {enviando ? 'Creando…' : 'Crear vuelos'}
+        </button>
+      </div>
+      <p className="adm__muted" style={{ marginTop: 8, marginBottom: 0 }}>
+        Las horas son las de la sede. Repetir esta operación no duplica vuelos.
+      </p>
+    </div>
   );
 }

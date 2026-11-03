@@ -25,10 +25,21 @@ export default function LoginPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, password })
       });
-      const body = await response.json();
+
+      // Un 500 puede responder vacío o con HTML. Leer el cuerpo como JSON a
+      // ciegas tapaba el error real con "Unexpected end of JSON input".
+      const texto = await response.text();
+      let body: { error?: string } = {};
+      try {
+        body = texto ? (JSON.parse(texto) as { error?: string }) : {};
+      } catch {
+        body = {};
+      }
 
       if (!response.ok) {
-        throw new Error(body.error ?? 'No se pudo iniciar sesión.');
+        throw new Error(
+          body.error ?? `El servidor respondió ${response.status} sin detalle. Revisa los registros del servidor.`
+        );
       }
 
       // refresh() además revalida el server component que comprueba la sesión.

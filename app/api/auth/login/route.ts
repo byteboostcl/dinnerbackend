@@ -37,6 +37,20 @@ export async function POST(request: Request): Promise<Response> {
     return NextResponse.json({ ok: false, error: 'Faltan correo y contraseña.' }, { status: 400 });
   }
 
+  // Si falta SESSION_SECRET, createSessionValue lanza. Se comprueba antes de
+  // tocar la base para poder responder un JSON con un mensaje útil: sin esto
+  // el endpoint devolvía 500 con cuerpo vacío y el panel solo mostraba
+  // "Unexpected end of JSON input", que no dice nada a quien lo ve.
+  if (!process.env['SESSION_SECRET'] || process.env['SESSION_SECRET'].length < 32) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: 'El servidor no tiene configurada la variable SESSION_SECRET (mínimo 32 caracteres).'
+      },
+      { status: 503 }
+    );
+  }
+
   const user = await prisma.user.findUnique({ where: { email } });
   const valid = await verifyPassword(password, user?.passwordHash ?? DUMMY_HASH);
 

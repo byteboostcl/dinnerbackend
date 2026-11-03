@@ -57,11 +57,19 @@ export async function PUT(request: Request): Promise<Response> {
     return NextResponse.json({ ok: false, error: 'El cuerpo no puede ir vacío.' }, { status: 400 });
   }
 
-  const template = await prisma.emailTemplate.upsert({
-    where: { key_seasonId: { key, seasonId } },
-    update: { subject, bodyHtml, updatedBy: auth.actor },
-    create: { key, seasonId, subject, bodyHtml, updatedBy: auth.actor }
-  });
+  // El índice único admite seasonId nulo (la plantilla general), pero el
+  // tipo de `upsert` en Prisma no acepta null en la clave compuesta. Se
+  // resuelve buscando primero.
+  const existente = await prisma.emailTemplate.findFirst({ where: { key, seasonId } });
+
+  const template = existente
+    ? await prisma.emailTemplate.update({
+        where: { id: existente.id },
+        data: { subject, bodyHtml, updatedBy: auth.actor }
+      })
+    : await prisma.emailTemplate.create({
+        data: { key, seasonId, subject, bodyHtml, updatedBy: auth.actor }
+      });
 
   return NextResponse.json({ ok: true, template });
 }

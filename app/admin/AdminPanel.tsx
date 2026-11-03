@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 
 /**
@@ -94,7 +94,7 @@ export function AdminPanel({
   const [seasonId, setSeasonId] = useState(seasons[0]?.id ?? '');
   const [message, setMessage] = useState<{ kind: 'ok' | 'error' | 'warn'; text: string } | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
-  const [tab, setTab] = useState<'vuelos' | 'boletos' | 'promos'>('vuelos');
+  const [tab, setTab] = useState<'reservas' | 'vuelos' | 'boletos' | 'promos' | 'correo'>('reservas');
 
   const season = useMemo(() => seasons.find(item => item.id === seasonId), [seasons, seasonId]);
 
@@ -214,9 +214,11 @@ export function AdminPanel({
 
             <div className="adm__row" style={{ margin: '4px 0 16px' }}>
               {([
+                ['reservas', 'Reservas'],
                 ['vuelos', 'Vuelos'],
                 ['boletos', 'Boletos y extras'],
-                ['promos', 'Promociones']
+                ['promos', 'Promociones'],
+                ['correo', 'Correo']
               ] as const).map(([clave, etiqueta]) => (
                 <button
                   key={clave}
@@ -227,6 +229,10 @@ export function AdminPanel({
                 </button>
               ))}
             </div>
+
+            {tab === 'reservas' && season && <BookingsPanel seasonId={season.id} currency={season.currency} />}
+
+            {tab === 'correo' && season && <EmailPanel season={season} />}
 
             {tab === 'promos' && <PromosPanel promos={promos} onDone={() => router.refresh()} />}
 
@@ -840,6 +846,329 @@ function NuevoHorario({ experienceId, onDone }: { experienceId: string; onDone: 
       <p className="adm__muted" style={{ marginTop: 8, marginBottom: 0 }}>
         Las horas son las de la sede. Repetir esta operación no duplica vuelos.
       </p>
+    </div>
+  );
+}
+
+/** Reservas de la temporada, con búsqueda y filtros. */
+function BookingsPanel({ seasonId, currency }: { seasonId: string; currency: string }) {
+  const [bookings, setBookings] = useState<Record<string, unknown>[]>([]);
+  const [summary, setSummary] = useState<{ confirmed: number; seats: number; amountCents: number } | null>(null);
+  const [total, setTotal] = useState(0);
+  const [q, setQ] = useState('');
+  const [status, setStatus] = useState('ALL');
+  const [cargando, setCargando] = useState(true);
+  const [abierta, setAbierta] = useState<string | null>(null);
+
+  const cargar = useCallback(async () => {
+    setCargando(true);
+    const params = new URLSearchParams({ seasonId, status });
+    if (q.trim()) params.set('q', q.trim());
+
+    const response = await fetch(`/api/admin/bookings?${params}`);
+    const payload = await response.json();
+    if (payload.ok) {
+      setBookings(payload.bookings);
+      setSummary(payload.summary);
+      setTotal(payload.total);
+    }
+    setCargando(false);
+  }, [seasonId, status, q]);
+
+  useEffect(() => {
+    // Espera a que se deje de teclear: sin esto cada letra dispara una
+    // consulta a la base.
+    const id = setTimeout(cargar, q ? 350 : 0);
+    return () => clearTimeout(id);
+  }, [cargar, q]);
+
+  const dinero = (cents: number) =>
+    (cents / 100).toLocaleString('es-MX', { style: 'currency', currency, maximumFractionDigits: 0 });
+
+  const ESTADOS: Record<string, string> = {
+    PENDING: 'Pendiente',
+    CONFIRMED: 'Confirmada',
+    CANCELLED: 'Cancelada',
+    REFUNDED: 'Reembolsada',
+    EXPIRED: 'Expirada'
+  };
+
+  return (
+    <div className="adm__card">
+      <div className="adm__row" style={{ marginBottom: 14 }}>
+        <h2 style={{ margin: 0 }}>Reservas</h2>
+        <span className="adm__spacer" />
+        {summary && (
+          <span className="adm__muted">
+            {summary.confirmed} confirmadas · {summary.seats} lugares · {dinero(summary.amountCents)}
+          </span>
+        )}
+      </div>
+
+      <div className="adm__row" style={{ marginBottom: 14 }}>
+        <input
+          className="adm__input"
+          style={{ flex: 1, minWidth: 220 }}
+          placeholder="Buscar por código, nombre, correo o teléfono"
+          value={q}
+          onChange={e => setQ(e.target.value)}
+        />
+        <select className="adm__input" style={{ width: 'auto' }} value={status} onChange={e => setStatus(e.target.value)}>
+          <option value="ALL">Todos los estados</option>
+          {Object.entries(ESTADOS).map(([valor, etiqueta]) => (
+            <option key={valor} value={valor}>{etiqueta}</option>
+          ))}
+        </select>
+        <button className="adm__btn adm__btn--ghost" onClick={cargar}>Actualizar</button>
+      </div>
+
+      {cargando ? (
+        <p className="adm__muted">Cargando…</p>
+      ) : bookings.length === 0 ? (
+        <p className="adm__muted">No hay reservas que coincidan.</p>
+      ) : (
+        <div style={{ overflowX: 'auto' }}>
+          <table className="adm__table">
+            <thead>
+              <tr>
+                <th>Código</th>
+                <th>Cliente</th>
+                <th>Vuelo</th>
+                <th>Lugares</th>
+                <th>Importe</th>
+                <th>Estado</th>
+                <th />
+              </tr>
+            </thead>
+            <tbody>
+              {bookings.map(b => {
+                const flight = b['flight'] as { startsAt: string; experience: string; timezone: string };
+                const id = String(b['id']);
+                const abiertaEsta = abierta === id;
+                const fecha = new Intl.DateTimeFormat('es-MX', {
+                  timeZone: flight.timezone,
+                  day: '2-digit',
+                  month: 'short',
+                  hour: '2-digit',
+                  minute: '2-digit',
+                  hourCycle: 'h23'
+                }).format(new Date(flight.startsAt));
+
+                return (
+                  <Fragment key={id}>
+                    <tr>
+                      <td style={{ fontWeight: 700 }}>{String(b['code'])}</td>
+                      <td>
+                        {String(b['customerName'])}
+                        <div className="adm__muted">{String(b['customerEmail'])}</div>
+                      </td>
+                      <td>
+                        {fecha}
+                        <div className="adm__muted">{flight.experience}</div>
+                      </td>
+                      <td>{String(b['seats'])}</td>
+                      <td style={{ whiteSpace: 'nowrap' }}>
+                        {dinero(Number(b['amountCents']))}
+                        {Number(b['discountCents']) > 0 && (
+                          <div className="adm__muted">−{dinero(Number(b['discountCents']))} {String(b['promoCodeUsed'] ?? '')}</div>
+                        )}
+                      </td>
+                      <td>
+                        <span className={`adm__chip ${b['status'] === 'CONFIRMED' ? 'adm__chip--published' : b['status'] === 'PENDING' ? 'adm__chip--draft' : 'adm__chip--closed'}`}>
+                          {ESTADOS[String(b['status'])] ?? String(b['status'])}
+                        </span>
+                      </td>
+                      <td style={{ textAlign: 'right' }}>
+                        <button className="adm__btn adm__btn--ghost adm__btn--sm" onClick={() => setAbierta(abiertaEsta ? null : id)}>
+                          {abiertaEsta ? 'Cerrar' : 'Ver'}
+                        </button>
+                      </td>
+                    </tr>
+                    {abiertaEsta && (
+                      <tr>
+                        <td colSpan={7} style={{ background: 'var(--azul-claro)' }}>
+                          <div className="adm__row" style={{ alignItems: 'flex-start', gap: 28 }}>
+                            <div>
+                              <p className="adm__muted" style={{ margin: 0, fontWeight: 700 }}>Contacto</p>
+                              <p style={{ margin: 0 }}>{String(b['customerEmail'])}</p>
+                              <p style={{ margin: 0 }}>{String(b['customerPhone'] ?? 'sin teléfono')}</p>
+                              {Boolean(b['invoiceRequested']) && <p style={{ margin: '6px 0 0', color: 'var(--rojo)' }}>Pidió factura</p>}
+                            </div>
+                            <div>
+                              <p className="adm__muted" style={{ margin: 0, fontWeight: 700 }}>Boletos</p>
+                              {(b['items'] as { name: string; quantity: number; unitPriceCents: number }[]).map((i, n) => (
+                                <p key={n} style={{ margin: 0 }}>
+                                  {i.quantity} × {i.name} · {dinero(i.unitPriceCents)}
+                                </p>
+                              ))}
+                            </div>
+                            {b['preferences'] ? (
+                              <div>
+                                <p className="adm__muted" style={{ margin: 0, fontWeight: 700 }}>Experiencia</p>
+                                <pre style={{ margin: 0, fontSize: 12, whiteSpace: 'pre-wrap' }}>
+                                  {JSON.stringify(b['preferences'], null, 1)}
+                                </pre>
+                              </div>
+                            ) : null}
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
+                );
+              })}
+            </tbody>
+          </table>
+          {total > bookings.length && (
+            <p className="adm__muted" style={{ marginTop: 10 }}>
+              Mostrando {bookings.length} de {total}. Afina la búsqueda para ver el resto.
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Plantilla del correo de confirmación, con vista previa. */
+function EmailPanel({ season }: { season: SeasonView }) {
+  const [subject, setSubject] = useState('');
+  const [bodyHtml, setBodyHtml] = useState('');
+  const [placeholders, setPlaceholders] = useState<{ tag: string; desc: string }[]>([]);
+  const [porTemporada, setPorTemporada] = useState(false);
+  const [msg, setMsg] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
+  const [guardando, setGuardando] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      const response = await fetch('/api/admin/email-templates');
+      const payload = await response.json();
+      if (!payload.ok) return;
+
+      setPlaceholders(payload.placeholders ?? []);
+      const lista = payload.templates as { seasonId: string | null; subject: string; bodyHtml: string }[];
+      const propia = lista.find(t => t.seasonId === season.id);
+      const general = lista.find(t => t.seasonId === null);
+      const elegida = propia ?? general;
+
+      setPorTemporada(Boolean(propia));
+      setSubject(elegida?.subject ?? 'Confirmación de vuelo — %date_event% para %name%');
+      setBodyHtml(
+        elegida?.bodyHtml ??
+          '<h2>Hola %name%,</h2>\n<p>Tu reserva <strong>%booking_id%</strong> quedó confirmada.</p>\n<p>%product_name% · %date_event% · %time_event%</p>\n<p>%seats% invitados · %total%</p>\n<p>%venue_name%<br>%venue_address%</p>'
+      );
+    })();
+  }, [season.id]);
+
+  async function guardar() {
+    setGuardando(true);
+    setMsg(null);
+
+    const response = await fetch('/api/admin/email-templates', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        key: 'booking_confirmation',
+        seasonId: porTemporada ? season.id : null,
+        subject,
+        bodyHtml
+      })
+    });
+    const payload = await response.json();
+
+    setMsg(
+      response.ok
+        ? { kind: 'ok', text: 'Plantilla guardada.' }
+        : { kind: 'error', text: String(payload.error ?? 'No se pudo guardar.') }
+    );
+    setGuardando(false);
+  }
+
+  // Vista previa con datos de ejemplo: el equipo tiene que poder ver cómo
+  // queda antes de que lo reciba un cliente.
+  const EJEMPLO: Record<string, string> = {
+    name: 'María López',
+    booking_id: 'DITS-7F3K2A',
+    product_name: season.experiences[0]?.name ?? 'Cena en las alturas',
+    date_event: 'jueves 11 de marzo de 2027',
+    time_event: '19:30',
+    seats: '2',
+    total: '$7,000 MXN',
+    venue_name: 'Parque La Ruina',
+    venue_address: 'Blvd. Fco. Eusebio Kino 9001, Hermosillo',
+    email: 'maria@ejemplo.com',
+    phone: '662 123 4567',
+    company_email: 'reservas@dinnerinthesky.com.mx',
+    company_phone: '+52 55 4506 4656'
+  };
+  const render = (texto: string) => texto.replace(/%([a-z_]+)%/gi, (m, k: string) => EJEMPLO[k] ?? m);
+
+  return (
+    <div className="adm__card">
+      <h2>Correo de confirmación</h2>
+      <p className="adm__muted" style={{ marginTop: -6 }}>
+        Se envía cuando se confirma el pago.
+      </p>
+
+      {msg && <div className={`adm__msg adm__msg--${msg.kind}`}>{msg.text}</div>}
+
+      <div className="adm__msg adm__msg--warn">
+        El envío de correos todavía no está conectado. Lo que escribas aquí se guarda, pero no sale ningún mensaje
+        hasta que enlacemos el servicio de envío.
+      </div>
+
+      <label className="adm__field">
+        <span className="adm__label">Asunto</span>
+        <input className="adm__input" value={subject} onChange={e => setSubject(e.target.value)} />
+      </label>
+
+      <label className="adm__field">
+        <span className="adm__label">Cuerpo (HTML)</span>
+        <textarea
+          className="adm__input"
+          style={{ minHeight: 220, fontFamily: 'ui-monospace, monospace', fontSize: 13 }}
+          value={bodyHtml}
+          onChange={e => setBodyHtml(e.target.value)}
+        />
+      </label>
+
+      <p className="adm__muted" style={{ marginBottom: 6 }}>Marcadores disponibles (haz clic para copiar):</p>
+      <div className="adm__row" style={{ gap: 6, marginBottom: 16 }}>
+        {placeholders.map(p => (
+          <button
+            key={p.tag}
+            className="adm__btn adm__btn--ghost adm__btn--sm"
+            title={p.desc}
+            onClick={() => navigator.clipboard?.writeText(p.tag)}
+          >
+            {p.tag}
+          </button>
+        ))}
+      </div>
+
+      <label className="adm__row" style={{ gap: 8, marginBottom: 16 }}>
+        <input type="checkbox" checked={porTemporada} onChange={e => setPorTemporada(e.target.checked)} />
+        <span className="adm__muted">
+          Usar solo para «{season.name}» (si no, es la plantilla general de todas las temporadas)
+        </span>
+      </label>
+
+      <button className="adm__btn adm__btn--primary" disabled={guardando} onClick={guardar}>
+        {guardando ? 'Guardando…' : 'Guardar plantilla'}
+      </button>
+
+      <div style={{ marginTop: 24 }}>
+        <p className="adm__label">Vista previa</p>
+        <div style={{ border: '1px solid var(--borde)', borderRadius: 12, overflow: 'hidden' }}>
+          <div style={{ background: 'var(--azul-claro)', padding: '10px 14px', fontSize: 13 }}>
+            <strong>Asunto:</strong> {render(subject)}
+          </div>
+          <div
+            style={{ padding: 16, background: '#fff' }}
+            dangerouslySetInnerHTML={{ __html: render(bodyHtml) }}
+          />
+        </div>
+      </div>
     </div>
   );
 }

@@ -257,6 +257,16 @@ model Booking {
   /// línea de la que captura el equipo a mano.
   channel String @default("web")
 
+  /// Lo que el cliente completa DESPUÉS de pagar: elección de menú, alergias
+  /// y si celebra algo. Va en JSON y no en columnas porque cada temporada
+  /// pregunta cosas distintas, y porque nada de esto puede bloquear la
+  /// compra: se pide cuando el dinero ya entró.
+  ///
+  /// Las alergias son datos de salud. Se guardan solo porque la cocina los
+  /// necesita para no enviar un plato que mande a alguien al hospital, y no
+  /// se usan para ninguna otra finalidad.
+  preferences Json?
+
   confirmedAt DateTime?
   cancelledAt DateTime?
 

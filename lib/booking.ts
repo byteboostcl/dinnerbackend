@@ -288,6 +288,14 @@ export async function confirmBooking(
     }
   });
 
+  // El correo se manda después de confirmar y fuera de la transacción: si
+  // falla, la reserva ya está pagada y válida igual. Nunca al revés.
+  const { sendBookingConfirmation } = await import('@/lib/mailer');
+  const envio = await sendBookingConfirmation(bookingId);
+  if (!envio.ok && !envio.skipped) {
+    console.error(`[booking] ${booking.code} confirmada, pero el correo falló: ${envio.error}`);
+  }
+
   return { ok: true, code: booking.code, alreadyConfirmed: false };
 }
 

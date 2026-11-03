@@ -1038,6 +1038,27 @@ function EmailPanel({ season }: { season: SeasonView }) {
   const [porTemporada, setPorTemporada] = useState(false);
   const [msg, setMsg] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
   const [guardando, setGuardando] = useState(false);
+  const [pruebaPara, setPruebaPara] = useState('');
+  const [probando, setProbando] = useState(false);
+
+  async function enviarPrueba() {
+    setProbando(true);
+    setMsg(null);
+
+    const response = await fetch('/api/admin/email-templates/test', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ to: pruebaPara, subject, bodyHtml })
+    });
+    const payload = await response.json();
+
+    setMsg(
+      response.ok
+        ? { kind: 'ok', text: `Prueba enviada a ${pruebaPara}. Revisa también la carpeta de spam.` }
+        : { kind: 'error', text: String(payload.error ?? 'No se pudo enviar.') }
+    );
+    setProbando(false);
+  }
 
   useEffect(() => {
     (async () => {
@@ -1112,9 +1133,18 @@ function EmailPanel({ season }: { season: SeasonView }) {
 
       {msg && <div className={`adm__msg adm__msg--${msg.kind}`}>{msg.text}</div>}
 
-      <div className="adm__msg adm__msg--warn">
-        El envío de correos todavía no está conectado. Lo que escribas aquí se guarda, pero no sale ningún mensaje
-        hasta que enlacemos el servicio de envío.
+      <div className="adm__row" style={{ marginBottom: 16 }}>
+        <input
+          className="adm__input"
+          style={{ flex: 1, minWidth: 200 }}
+          type="email"
+          placeholder="Enviar una prueba a…"
+          value={pruebaPara}
+          onChange={e => setPruebaPara(e.target.value)}
+        />
+        <button className="adm__btn adm__btn--ghost" disabled={probando} onClick={enviarPrueba}>
+          {probando ? 'Enviando…' : 'Enviar prueba'}
+        </button>
       </div>
 
       <label className="adm__field">

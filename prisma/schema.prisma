@@ -37,3 +37,243 @@ model Lead {
   @@index([email])
   @@map("leads")
 }
+
+// ---------------------------------------------------------------------------
+// Reservas
+//
+// Sustituye progresivamente al widget de TuriTop. Las piezas son cuatro:
+//
+//   Season       una temporada en una ciudad (Hermosillo, marzo 2027)
+//   Experience   lo que se vende dentro de esa temporada, con su precio
+//                (Cena Atardecer, Cena con Estrellas)
+//   Flight       un vuelo concreto: fecha, hora y 22 asientos
+//   Booking      la compra, con sus boletos
+//
+// Esa separación existe porque el precio y el nombre cambian por temporada,
+// pero el vuelo es la unidad que se llena y la que el staff abre y cierra.
+//
+// Sobre el dinero: todos los importes son enteros en centavos. Usar decimales
+// para dinero es la forma clásica de perder un peso por redondeo, y Stripe
+// trabaja en centavos de todos modos.
+//
+// Sobre las horas: todo se guarda en UTC. La zona de la temporada
+// (`timezone`) es la que manda para mostrar e interpretar, porque Sonora no
+// cambia de horario y el resto del país sí.
+// ---------------------------------------------------------------------------
+
+enum SeasonStatus {
+  /// Se está armando: no se muestra en el sitio.
+  DRAFT
+  /// Vendiendo.
+  PUBLISHED
+  /// Terminó o se detuvo la venta.
+  CLOSED
+}
+
+enum FlightStatus {
+  /// Abierto a la venta mientras queden lugares.
+  SCHEDULED
+  /// Cerrado a mano por el staff (clima, evento privado, corte de venta).
+  CLOSED
+  /// Cancelado después de haber vendido: obliga a reubicar o reembolsar.
+  CANCELLED
+}
+
+enum BookingStatus {
+  /// Se generó la intención de pago y el cupo está apartado, pero Stripe aún
+  /// no confirma. Si el pago no llega, el apartado vence y los lugares vuelven.
+  PENDING
+  /// Pago confirmado por webhook. Es el único estado que ocupa lugar de verdad.
+  CONFIRMED
+  /// Cancelada antes de usarse, con o sin reembolso.
+  CANCELLED
+  /// Reembolsada total o parcialmente (ver refundedCents).
+  REFUNDED
+  /// El apartado venció sin pago.
+  EXPIRED
+}
+
+model Season {
+  id String @id @default(uuid())
+
+  /// Coincide con el slug de la ciudad en el sitio Angular ('hermosillo').
+  citySlug String
+  name     String
+  /// Sede física, para el boleto y los correos.
+  venueName    String?
+  venueAddress String?
+
+  /// IANA, p. ej. 'America/Hermosillo'. Sonora no aplica horario de verano:
+  /// asumir la zona de CDMX desfasaría los vuelos una hora media temporada.
+  timezone String @default("America/Hermosillo")
+  currency String @default("MXN")
+
+  startsOn DateTime @db.Date
+  endsOn   DateTime @db.Date
+
+  status SeasonStatus @default(DRAFT)
+
+  experiences Experience[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([citySlug, status])
+  @@map("seasons")
+}
+
+model Experience {
+  id       String @id @default(uuid())
+  seasonId String
+  season   Season @relation(fields: [seasonId], references: [id], onDelete: Cascade)
+
+  /// Estable dentro de la temporada ('cena-atardecer'): es lo que se manda a
+  /// GA4 como item_id, así que cambiarlo rompe la continuidad de los informes.
+  slug        String
+  name        String
+  description String?
+
+  /// Precio por persona, en centavos, impuestos incluidos.
+  priceCents Int
+
+  /// Orden en que se listan en el sitio.
+  position Int @default(0)
+
+  flights Flight[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([seasonId, slug])
+  @@map("experiences")
+}
+
+model Flight {
+  id           String     @id @default(uuid())
+  experienceId String
+  experience   Experience @relation(fields: [experienceId], references: [id], onDelete: Cascade)
+
+  /// Instante de despegue, en UTC.
+  startsAt DateTime
+
+  /// La mesa son 22 lugares, pero se guarda por vuelo porque un privado o un
+  /// bloqueo técnico pueden reducirla.
+  capacity Int @default(22)
+
+  /// Lugares comprometidos: confirmados más apartados vigentes.
+  ///
+  /// Es un contador materializado a propósito, no un COUNT. Toda reserva lo
+  /// incrementa con un UPDATE condicional
+  /// (`SET seats_taken = seats_taken + n WHERE id = ? AND seats_taken + n <= capacity`),
+  /// que en Postgres es atómico: si dos personas pelean por el último lugar,
+  /// la segunda afecta cero filas y se queda sin cupo. Contar reservas en el
+  /// momento de vender abriría una ventana para sobrevender.
+  seatsTaken Int @default(0)
+
+  status FlightStatus @default(SCHEDULED)
+
+  /// Nota interna del staff (motivo de cierre, por ejemplo). No se muestra.
+  staffNote String?
+
+  bookings Booking[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([experienceId, startsAt])
+  @@index([startsAt, status])
+  @@map("flights")
+}
+
+model Booking {
+  id String @id @default(uuid())
+
+  /// Código corto que ve el cliente y que se busca en puerta ('DITS-7F3K2A').
+  code String @unique
+
+  flightId String
+  flight   Flight @relation(fields: [flightId], references: [id])
+
+  seats Int
+
+  /// Datos de contacto de quien compra. Son datos personales: solo se piden
+  /// los que hacen falta para entregar el servicio (aviso de privacidad,
+  /// finalidades primarias).
+  customerName  String
+  customerEmail String
+  customerPhone String?
+
+  amountCents Int
+  currency    String @default("MXN")
+
+  status BookingStatus @default(PENDING)
+
+  /// Apartado: hasta cuándo se guardan los lugares sin pago confirmado.
+  /// Pasado ese instante, un proceso los libera.
+  holdExpiresAt DateTime?
+
+  /// Identificadores de Stripe. `paymentIntentId` es único para que un
+  /// reintento de webhook no pueda crear una segunda reserva del mismo pago.
+  stripeSessionId       String? @unique
+  stripePaymentIntentId String? @unique
+
+  refundedCents Int @default(0)
+
+  /// El cliente pidió factura. Mientras el CFDI no esté automatizado, esto es
+  /// lo que le dice al staff a quién hay que facturar.
+  invoiceRequested Boolean @default(false)
+
+  /// Por dónde entró la venta ('web', 'staff'), para separar la venta en
+  /// línea de la que captura el equipo a mano.
+  channel String @default("web")
+
+  confirmedAt DateTime?
+  cancelledAt DateTime?
+
+  tickets Ticket[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([flightId, status])
+  @@index([customerEmail])
+  @@index([status, holdExpiresAt])
+  @@map("bookings")
+}
+
+model Ticket {
+  id        String  @id @default(uuid())
+  bookingId String
+  booking   Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  /// Valor del QR. Es un secreto por boleto, no el id de la reserva: con el
+  /// id bastaría adivinar un consecutivo para falsificar un acceso.
+  qrToken String @unique
+
+  /// Nombre del pasajero cuando se captura en puerta; puede ir vacío.
+  passengerName String?
+
+  checkedInAt DateTime?
+  checkedInBy String?
+
+  createdAt DateTime @default(now())
+
+  @@index([bookingId])
+  @@map("tickets")
+}
+
+/// Registro de eventos de Stripe ya procesados.
+///
+/// Stripe reintenta los webhooks y puede mandar el mismo evento más de una
+/// vez; sin esta tabla, un reintento duplicaría boletos o reembolsos. El id
+/// del evento es la clave: si ya está, se responde 200 y no se hace nada.
+model StripeEvent {
+  id            String   @id
+  type          String
+  processedAt   DateTime @default(now())
+  /// Payload tal cual, para auditar una discrepancia con el panel de Stripe.
+  payload       Json
+
+  @@index([type])
+  @@map("stripe_events")
+}

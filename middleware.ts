@@ -17,6 +17,13 @@ import type { NextRequest } from 'next/server';
  * El webhook de Stripe y el de FormSubmit no pasan por aquí en la práctica:
  * son llamadas servidor a servidor, sin origen, y se autentican por firma o
  * por secreto en la URL.
+ *
+ * Historia: /api/leads tenía su propio CORS en lib/cors.ts, resuelto a mano
+ * endpoint por endpoint. Se unificó aquí (2026-11-03) porque los dos
+ * mecanismos juntos emitían Access-Control-Allow-Origin dos veces y el
+ * navegador rechaza la respuesta cuando ese encabezado viene duplicado. Un
+ * único lugar para todo /api/* además evita que un endpoint nuevo —el
+ * checkout, por ejemplo— nazca sin CORS y falle solo desde el navegador.
  */
 const ALLOWED_ORIGINS = [
   'https://dinnerinthesky.com.mx',

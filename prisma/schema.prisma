@@ -61,6 +61,36 @@ model Lead {
 // cambia de horario y el resto del país sí.
 // ---------------------------------------------------------------------------
 
+/// Quién puede entrar al panel del staff.
+///
+/// Dos roles bastan hoy: STAFF opera la temporada (abre y cierra vuelos, ve
+/// reservas) y ADMIN además administra usuarios. Un rol de solo lectura se
+/// agregará cuando alguien lo necesite, no antes.
+enum UserRole {
+  ADMIN
+  STAFF
+}
+
+model User {
+  id    String   @id @default(uuid())
+  email String   @unique
+  name  String
+  /// scrypt$N$sal$hash (ver lib/password.ts). Nunca la contraseña en claro.
+  passwordHash String
+  role  UserRole @default(STAFF)
+
+  /// Desactivar en vez de borrar: las acciones pasadas siguen atribuidas a
+  /// alguien, y volver a dar acceso es un clic.
+  active Boolean @default(true)
+
+  lastLoginAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("users")
+}
+
 enum SeasonStatus {
   /// Se está armando: no se muestra en el sitio.
   DRAFT

@@ -1,3 +1,5 @@
+import { currentSession } from '@/lib/session';
+
 /**
  * FormSubmit no permite mandar headers custom en su _webhook, solo una URL.
  * Por eso el secreto va en el query string (?secret=...) en vez de un header.
@@ -22,6 +24,9 @@ export function checkWebhookSecret(request: Request): string | null {
  * (x-api-key) o por query (?api_key=), porque el segundo caso es el único
  * práctico para abrir el export directo en el navegador. Falla cerrado si no
  * hay ADMIN_API_KEY configurado.
+ *
+ * Para el panel del staff usa `requireStaff` en vez de esto: identifica a la
+ * persona y no obliga a repartir una llave compartida.
  */
 export function checkApiKey(request: Request): string | null {
   const { searchParams } = new URL(request.url);
@@ -35,4 +40,32 @@ export function checkApiKey(request: Request): string | null {
     return 'API key inválida o ausente.';
   }
   return null;
+}
+
+/**
+ * Autorización del panel y de los endpoints de administración.
+ *
+ * Acepta dos formas, en este orden:
+ *  1. Sesión del panel (cookie firmada). Es la vía normal y deja saber quién
+ *     hizo cada cosa.
+ *  2. ADMIN_API_KEY. Se mantiene para scripts, curl y lo que ya existía; no
+ *     identifica a nadie, así que es el último recurso.
+ *
+ * Devuelve el actor —útil para registrar quién actuó— o un error listo para
+ * responder con 401.
+ */
+export async function requireStaff(
+  request: Request
+): Promise<{ actor: string; role: string } | { error: string }> {
+  const session = await currentSession();
+  if (session) {
+    return { actor: session.email, role: session.role };
+  }
+
+  const apiKeyError = checkApiKey(request);
+  if (!apiKeyError) {
+    return { actor: 'api-key', role: 'ADMIN' };
+  }
+
+  return { error: 'Necesitas iniciar sesión en el panel o enviar una API key válida.' };
 }

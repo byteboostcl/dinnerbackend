@@ -149,6 +149,8 @@ Staff (mismo `x-api-key` / `?api_key=` que los leads):
 - `GET  /api/admin/flights?seasonId=…` o `?experienceId=…`
 - `POST /api/admin/flights` — genera los vuelos de un rango. Idempotente:
   repetirlo no duplica nada, así que sirve para agregar un horario después.
+- `PATCH /api/admin/seasons/:id` — publicar, cerrar o corregir datos.
+- `PATCH /api/admin/seasons/:id` — publicar, cerrar o corregir datos.
 - `PATCH /api/admin/flights/:id` — abrir, cerrar o cambiar capacidad.
 
 Ejemplo de generación (tres semanas, de jueves a domingo, dos horarios):

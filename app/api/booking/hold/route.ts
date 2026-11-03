@@ -49,7 +49,8 @@ export async function POST(request: Request): Promise<Response> {
     customerName,
     customerEmail,
     customerPhone,
-    invoiceRequested: body['invoiceRequested'] === true
+    invoiceRequested: body['invoiceRequested'] === true,
+    promoCode: typeof body['promoCode'] === 'string' ? body['promoCode'] : null
   });
 
   if (!result.ok) {
@@ -65,6 +66,9 @@ export async function POST(request: Request): Promise<Response> {
       id: result.bookingId,
       code: result.code,
       amountCents: result.amountCents,
+      subtotalCents: result.subtotalCents,
+      discountCents: result.discountCents,
+      promoCode: result.promoCode,
       currency: result.currency,
       holdExpiresAt: result.holdExpiresAt,
       holdMinutes: HOLD_MINUTES

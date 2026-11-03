@@ -1,5 +1,6 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { prisma } from '@/lib/prisma';
+import { applyPromo, redeemPromo } from '@/lib/promo';
 
 /**
  * Reserva de lugares.
@@ -39,10 +40,22 @@ export interface HoldRequest {
   customerEmail: string;
   customerPhone?: string | null;
   invoiceRequested?: boolean;
+  /** Código tal como lo tecleó la persona; el descuento se calcula aquí. */
+  promoCode?: string | null;
 }
 
 export type HoldResult =
-  | { ok: true; bookingId: string; code: string; amountCents: number; currency: string; holdExpiresAt: Date }
+  | {
+      ok: true;
+      bookingId: string;
+      code: string;
+      amountCents: number;
+      subtotalCents: number;
+      discountCents: number;
+      promoCode: string | null;
+      currency: string;
+      holdExpiresAt: Date;
+    }
   | { ok: false; reason: 'FLIGHT_NOT_FOUND' | 'FLIGHT_CLOSED' | 'FLIGHT_PAST' | 'NO_SEATS'; message: string };
 
 /**
@@ -70,9 +83,33 @@ export async function holdSeats(request: HoldRequest): Promise<HoldResult> {
     return { ok: false, reason: 'FLIGHT_PAST', message: 'Ese vuelo ya salió.' };
   }
 
-  const amountCents = flight.experience.priceCents * seats;
+  const subtotalCents = flight.experience.priceCents * seats;
   const currency = flight.experience.season.currency;
   const holdExpiresAt = new Date(Date.now() + HOLD_MINUTES * 60_000);
+
+  // El descuento se recalcula aquí aunque la pantalla ya lo haya mostrado:
+  // lo único que viaja desde el navegador es el código tecleado, nunca el
+  // importe. Si el código venció entre la consulta y el pago, se cobra el
+  // precio completo en vez de fallar.
+  let discountCents = 0;
+  let promoCodeId: string | null = null;
+  let promoCodeUsed: string | null = null;
+
+  if (request.promoCode) {
+    const promo = await applyPromo(request.promoCode, {
+      seats,
+      unitPriceCents: flight.experience.priceCents,
+      seasonId: flight.experience.seasonId,
+      experienceId: flight.experienceId
+    });
+    if (promo.ok) {
+      discountCents = promo.discountCents;
+      promoCodeId = promo.promoCodeId;
+      promoCodeUsed = promo.code;
+    }
+  }
+
+  const amountCents = subtotalCents - discountCents;
 
   try {
     return await prisma.$transaction(async tx => {
@@ -102,6 +139,10 @@ export async function holdSeats(request: HoldRequest): Promise<HoldResult> {
           customerEmail: request.customerEmail,
           customerPhone: request.customerPhone ?? null,
           amountCents,
+          subtotalCents,
+          discountCents,
+          promoCodeId,
+          promoCodeUsed,
           currency,
           status: 'PENDING',
           holdExpiresAt,
@@ -114,6 +155,9 @@ export async function holdSeats(request: HoldRequest): Promise<HoldResult> {
         bookingId: booking.id,
         code: booking.code,
         amountCents,
+        subtotalCents,
+        discountCents,
+        promoCode: promoCodeUsed,
         currency,
         holdExpiresAt
       };
@@ -162,6 +206,10 @@ export async function confirmBooking(
         stripeSessionId: payment?.stripeSessionId ?? undefined
       }
     });
+
+    if (booking.promoCodeId) {
+      await redeemPromo(booking.promoCodeId);
+    }
 
     // Un boleto por asiento, cada uno con su propio secreto para el QR.
     if (booking.tickets.length === 0) {

@@ -123,6 +123,68 @@ enum BookingStatus {
   EXPIRED
 }
 
+/// Cómo descuenta un código promocional.
+enum PromoKind {
+  /// Porcentaje sobre el total, 1 a 100.
+  PERCENT
+  /// Cantidad fija en centavos.
+  FIXED
+  /// Boletos gratis por cada N pagados (2x1 y variantes).
+  FREE_SEATS
+  /// Cortesía total: la reserva queda en cero.
+  FULL_COMP
+}
+
+/// Código promocional.
+///
+/// El importe final SIEMPRE se calcula en el servidor a partir de este
+/// registro. El navegador nunca manda el descuento: mandarlo sería dejar que
+/// cualquiera edite el precio desde la consola.
+model PromoCode {
+  id String @id @default(uuid())
+
+  /// Siempre en mayúsculas y sin espacios; se normaliza al guardar y al
+  /// validar, porque la gente lo teclea como quiere.
+  code        String    @unique
+  description String?
+  kind        PromoKind
+
+  /// Significado según `kind`: porcentaje (PERCENT), centavos (FIXED),
+  /// boletos gratis por bloque (FREE_SEATS). En FULL_COMP se ignora.
+  value Int
+
+  /// Solo FREE_SEATS: boletos pagados que exige cada boleto gratis.
+  /// Un 2x1 es buyRequired 1 y value 1; "compra 3 y llévate 1" es 3 y 1.
+  buyRequired Int @default(1)
+
+  /// Límite de canjes en total. null = sin límite.
+  maxRedemptions Int?
+  timesRedeemed  Int @default(0)
+
+  /// Mínimo de lugares para que aplique.
+  minSeats Int @default(1)
+
+  validFrom  DateTime?
+  validUntil DateTime?
+
+  /// Restricciones opcionales. Sin ellas, el código vale en todo el sitio.
+  seasonId     String?
+  experienceId String?
+
+  active Boolean @default(true)
+
+  /// Quién lo creó, para rastrear cortesías: son dinero que no entra.
+  createdBy String?
+
+  bookings Booking[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([active, validUntil])
+  @@map("promo_codes")
+}
+
 model Season {
   id String @id @default(uuid())
 
@@ -233,8 +295,21 @@ model Booking {
   customerEmail String
   customerPhone String?
 
+  /// Lo que se cobra, ya con el descuento aplicado.
   amountCents Int
   currency    String @default("MXN")
+
+  /// Precio antes del descuento y cuánto se descontó. Se guardan los dos
+  /// para poder explicar un cobro meses después sin recalcular nada, y
+  /// porque el valor del código puede cambiar o el código desaparecer.
+  subtotalCents Int?
+  discountCents Int  @default(0)
+
+  promoCodeId String?
+  promoCode   PromoCode? @relation(fields: [promoCodeId], references: [id])
+  /// El código tal como se usó: si alguien lo renombra o lo borra, la
+  /// reserva sigue diciendo con qué se compró.
+  promoCodeUsed String?
 
   status BookingStatus @default(PENDING)
 

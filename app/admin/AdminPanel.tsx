@@ -8,6 +8,15 @@ import { CheckinPanel } from './secciones/CheckinPanel';
 import { CitiesPanel } from './secciones/CitiesPanel';
 import { EmailLogPanel } from './secciones/EmailLogPanel';
 import { useRouter } from 'next/navigation';
+import {
+  ICONO_SECCION,
+  IconoAtras,
+  IconoCandado,
+  IconoCiudad,
+  IconoMesa,
+  IconoSalir,
+  IconoTemporadas
+} from './Iconos';
 
 /**
  * Panel de temporada: ver la ocupación vuelo por vuelo, cambiar los asientos
@@ -83,6 +92,7 @@ interface SeasonView {
  * que no tienen nada que ver con una temporada.
  */
 const TITULOS: Record<string, string> = {
+  portada: 'Sedes',
   resumen: 'Resumen',
   reservas: 'Reservas',
   puerta: 'Puerta',
@@ -126,11 +136,19 @@ export function AdminPanel({
   user: { email: string; role: string };
 }) {
   const router = useRouter();
-  const [seasonId, setSeasonId] = useState(seasons[0]?.id ?? '');
+  /**
+   * Ninguna temporada elegida al entrar: el panel abre en la portada de
+   * sedes. Entrar directo a la primera temporada hacía creer que el panel
+   * "era" de esa ciudad, y con cinco sedes eso es sencillamente falso.
+   */
+  const [seasonId, setSeasonId] = useState('');
+  /** Sede abierta en la portada. Todas empiezan cerradas. */
+  const [sedeAbierta, setSedeAbierta] = useState('');
   const [clave, setClave] = useState(false);
   const [message, setMessage] = useState<{ kind: 'ok' | 'error' | 'warn'; text: string } | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [tab, setTab] = useState<
+    | 'portada'
     | 'resumen'
     | 'reservas'
     | 'puerta'
@@ -142,7 +160,7 @@ export function AdminPanel({
     | 'correo'
     | 'bitacora'
     | 'config'
-  >('resumen');
+  >('portada');
 
   const season = useMemo(() => seasons.find(item => item.id === seasonId), [seasons, seasonId]);
 
@@ -177,6 +195,11 @@ export function AdminPanel({
   function nombreCiudad(slug: string | undefined): string {
     if (!slug) return '';
     return ciudades.find(c => c.slug === slug)?.name ?? slug;
+  }
+
+  function seccionIcono(clave: string) {
+    const Icono = ICONO_SECCION[clave];
+    return Icono ? <Icono size={21} /> : null;
   }
 
   const ciudadActual = ciudades.find(c => c.slug === season?.citySlug);
@@ -241,17 +264,39 @@ export function AdminPanel({
   return (
     <>
       <header className="adm__bar">
-        <span className="adm__brand">Dinner in the Sky · Panel</span>
+        <span className="adm__brand" style={{ display: 'inline-flex', alignItems: 'center', gap: 9 }}>
+          <IconoMesa size={18} />
+          Dinner in the Sky · Panel
+        </span>
         <span className="adm__spacer" />
         <span className="adm__who">{user.email}</span>
         <button
           className="adm__btn adm__btn--ghost adm__btn--sm"
-          style={{ color: '#fff', borderColor: 'rgba(255,255,255,.35)', marginRight: 8 }}
+          style={{
+            color: '#fff',
+            borderColor: 'rgba(255,255,255,.35)',
+            marginRight: 8,
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 6
+          }}
           onClick={() => setClave(v => !v)}
         >
+          <IconoCandado size={14} />
           Contraseña
         </button>
-        <button className="adm__btn adm__btn--ghost adm__btn--sm" style={{ color: '#fff', borderColor: 'rgba(255,255,255,.35)' }} onClick={logout}>
+        <button
+          className="adm__btn adm__btn--ghost adm__btn--sm"
+          style={{
+            color: '#fff',
+            borderColor: 'rgba(255,255,255,.35)',
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 6
+          }}
+          onClick={logout}
+        >
+          <IconoSalir size={14} />
           Salir
         </button>
       </header>
@@ -259,19 +304,56 @@ export function AdminPanel({
       <main className="adm__main">
         {clave && <CambiarClave onListo={() => setClave(false)} />}
 
-        {seasons.length === 0 ? (
-          <div className="adm__card">
-            <h2>Todavía no hay temporadas</h2>
-            <p className="adm__muted">Cuando se cree una temporada aparecerá aquí con sus vuelos.</p>
-          </div>
+        {tab === 'portada' ? (
+          <Portada
+            seasons={seasons}
+            ciudades={ciudades}
+            sedeAbierta={sedeAbierta}
+            onAbrirSede={slug => setSedeAbierta(sedeAbierta === slug ? '' : slug)}
+            onElegirTemporada={id => {
+              setSeasonId(id);
+              setTab('resumen');
+            }}
+            onIrA={destino => {
+              setSeasonId('');
+              setTab(destino);
+            }}
+          />
         ) : (
           <>
-            <h1>{TITULOS[tab]}</h1>
-            <p className="adm__sub">
-              {SECCION_DE_TEMPORADA.has(tab)
-                ? `${nombreCiudad(season?.citySlug)} · ${season?.name} · horarios en ${season?.timezone}`
-                : 'Todas las sedes'}
-            </p>
+            <div className="adm__migas">
+              <button
+                className="adm__volver"
+                onClick={() => {
+                  setSeasonId('');
+                  setTab('portada');
+                }}
+              >
+                <IconoAtras size={15} />
+                Sedes
+              </button>
+              {season && (
+                <>
+                  <span>/</span>
+                  <span>{nombreCiudad(season.citySlug)}</span>
+                  <span>/</span>
+                  <span>{season.name}</span>
+                </>
+              )}
+            </div>
+
+            <div className="adm__titulo">
+              <span className="adm__titulo-ico">{seccionIcono(tab)}</span>
+              <div>
+                <h1>{TITULOS[tab]}</h1>
+                <p className="adm__sub" style={{ margin: 0 }}>
+                  {season && SECCION_DE_TEMPORADA.has(tab)
+                    ? `${nombreCiudad(season.citySlug)} · ${season.name} · horarios en ${season.timezone}`
+                    : 'Afecta a todas las sedes'}
+                </p>
+              </div>
+            </div>
+            <div style={{ height: 20 }} />
 
             {message && <div className={`adm__msg adm__msg--${message.kind}`}>{message.text}</div>}
 
@@ -325,29 +407,38 @@ export function AdminPanel({
             </div>
             )}
 
-            <div className="adm__row" style={{ margin: '4px 0 16px' }}>
+            <nav className="adm__nav">
               {([
                 ['resumen', 'Resumen'],
                 ['reservas', 'Reservas'],
                 ['puerta', 'Puerta'],
-                ['ciudades', 'Ciudades'],
-                ['temporadas', 'Temporadas'],
                 ['vuelos', 'Vuelos'],
                 ['boletos', 'Boletos y extras'],
-                ['promos', 'Promociones'],
                 ['correo', 'Correo'],
+                ['ciudades', 'Sedes'],
+                ['temporadas', 'Temporadas'],
+                ['promos', 'Promociones'],
                 ['bitacora', 'Bitácora'],
                 ['config', 'Configuración']
-              ] as const).map(([clave, etiqueta]) => (
-                <button
-                  key={clave}
-                  className={`adm__btn ${tab === clave ? 'adm__btn--primary' : 'adm__btn--ghost'}`}
-                  onClick={() => setTab(clave)}
-                >
-                  {etiqueta}
-                </button>
-              ))}
-            </div>
+              ] as const)
+                // Sin temporada elegida solo tienen sentido las secciones que
+                // no dependen de una. Enseñar "Puerta" sin saber de qué vuelo
+                // sería una pantalla vacía sin explicación.
+                .filter(([clave]) => season || !SECCION_DE_TEMPORADA.has(clave))
+                .map(([clave, etiqueta]) => {
+                  const Icono = ICONO_SECCION[clave];
+                  return (
+                    <button
+                      key={clave}
+                      className={`adm__tab ${tab === clave ? 'adm__tab--on' : ''}`}
+                      onClick={() => setTab(clave)}
+                    >
+                      {Icono && <Icono size={16} />}
+                      {etiqueta}
+                    </button>
+                  );
+                })}
+            </nav>
 
             {tab === 'resumen' && season && <StatsPanel seasonId={season.id} />}
 
@@ -1278,6 +1369,167 @@ function BookingsPanel({ season }: { season: SeasonView }) {
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * Portada del panel: elegir sede.
+ *
+ * Abre con todas las sedes cerradas. Se abre una y entonces aparecen sus
+ * temporadas; se elige una temporada y recién ahí se entra a trabajar.
+ *
+ * El orden importa: el panel no es "el panel de Hermosillo", es el panel de
+ * Dinner in the Sky. Entrar directo a una temporada hacía creer lo contrario,
+ * y con cinco sedes eso lleva a editar la ciudad equivocada.
+ */
+function Portada({
+  seasons,
+  ciudades,
+  sedeAbierta,
+  onAbrirSede,
+  onElegirTemporada,
+  onIrA
+}: {
+  seasons: SeasonView[];
+  ciudades: { slug: string; name: string; siteStatus: string }[];
+  sedeAbierta: string;
+  onAbrirSede: (slug: string) => void;
+  onElegirTemporada: (id: string) => void;
+  onIrA: (destino: 'ciudades' | 'temporadas' | 'promos' | 'bitacora' | 'config') => void;
+}) {
+  // Se listan las sedes dadas de alta, más cualquier ciudad que tenga
+  // temporadas sin estar en la tabla: si existe una temporada apuntando a un
+  // slug desconocido, esconderla dejaría reservas invisibles.
+  const huerfanas = [...new Set(seasons.map(s => s.citySlug))].filter(
+    slug => !ciudades.some(c => c.slug === slug)
+  );
+
+  const sedes = [
+    ...ciudades.map(c => ({ slug: c.slug, name: c.name, siteStatus: c.siteStatus })),
+    ...huerfanas.map(slug => ({ slug, name: slug, siteStatus: 'PENDING' }))
+  ];
+
+  const abiertas = (slug: string) => seasons.filter(s => s.citySlug === slug);
+
+  const ATAJOS = [
+    ['ciudades', 'Sedes'],
+    ['temporadas', 'Temporadas'],
+    ['promos', 'Promociones'],
+    ['bitacora', 'Bitácora'],
+    ['config', 'Configuración']
+  ] as const;
+
+  return (
+    <>
+      <div className="adm__titulo">
+        <span className="adm__titulo-ico">
+          <IconoMesa size={21} />
+        </span>
+        <div>
+          <h1>¿Con qué sede trabajamos?</h1>
+          <p className="adm__sub" style={{ margin: 0 }}>
+            Elige una ciudad y después su temporada.
+          </p>
+        </div>
+      </div>
+      <div style={{ height: 22 }} />
+
+      {sedes.length === 0 ? (
+        <div className="adm__card adm__vacio">
+          <IconoCiudad size={40} />
+          <h2>Todavía no hay sedes</h2>
+          <p className="adm__muted">Da de alta la primera desde Sedes y después créale su temporada.</p>
+          <button className="adm__btn adm__btn--primary" onClick={() => onIrA('ciudades')}>
+            Ir a Sedes
+          </button>
+        </div>
+      ) : (
+        <div className="adm__sedes">
+          {sedes.map(sede => {
+            const temporadas = abiertas(sede.slug);
+            const abierta = sedeAbierta === sede.slug;
+            const vendiendo = temporadas.filter(t => t.status === 'PUBLISHED').length;
+
+            return (
+              <div key={sede.slug}>
+                <button
+                  className={`adm__sede ${abierta ? 'adm__sede--activa' : ''} ${
+                    temporadas.length === 0 ? 'adm__sede--muda' : ''
+                  }`}
+                  onClick={() => onAbrirSede(sede.slug)}
+                  style={{ width: '100%' }}
+                >
+                  <span className="adm__sede-top">
+                    <span className="adm__sede-ico">
+                      <IconoCiudad size={24} />
+                    </span>
+                    <span>
+                      <span className="adm__sede-nombre" style={{ display: 'block' }}>
+                        {sede.name}
+                      </span>
+                      <span className="adm__sede-slug">/{sede.slug}</span>
+                    </span>
+                  </span>
+
+                  <span className="adm__sede-pie">
+                    {temporadas.length === 0
+                      ? 'Sin temporadas'
+                      : `${temporadas.length} temporada${temporadas.length === 1 ? '' : 's'}`}
+                    {vendiendo > 0 && <span className="adm__chip adm__chip--published">Vendiendo</span>}
+                    {sede.siteStatus !== 'LIVE' && <span className="adm__chip adm__chip--draft">Sin página</span>}
+                  </span>
+                </button>
+
+                {abierta && (
+                  <div className="adm__temporadas" style={{ marginTop: 10 }}>
+                    {temporadas.length === 0 ? (
+                      <p className="adm__muted" style={{ padding: '0 4px' }}>
+                        Esta sede no tiene temporadas. Créale una desde Temporadas.
+                      </p>
+                    ) : (
+                      temporadas.map(t => (
+                        <button key={t.id} className="adm__temporada" onClick={() => onElegirTemporada(t.id)}>
+                          <IconoTemporadas size={18} />
+                          <span style={{ flex: 1 }}>
+                            <span className="adm__temporada-nombre" style={{ display: 'block' }}>
+                              {t.name}
+                            </span>
+                            <span className="adm__muted">
+                              {t.experiences.length} experiencia{t.experiences.length === 1 ? '' : 's'}
+                            </span>
+                          </span>
+                          <span className={`adm__chip adm__chip--${t.status.toLowerCase()}`}>
+                            {STATUS_LABEL[t.status] ?? t.status}
+                          </span>
+                        </button>
+                      ))
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      <div className="adm__card">
+        <h2>Sin entrar a una temporada</h2>
+        <p className="adm__muted" style={{ marginTop: -6 }}>
+          Estas secciones valen para todas las sedes a la vez.
+        </p>
+        <nav className="adm__nav" style={{ margin: 0 }}>
+          {ATAJOS.map(([clave, etiqueta]) => {
+            const Icono = ICONO_SECCION[clave];
+            return (
+              <button key={clave} className="adm__tab" onClick={() => onIrA(clave)}>
+                {Icono && <Icono size={16} />}
+                {etiqueta}
+              </button>
+            );
+          })}
+        </nav>
+      </div>
+    </>
   );
 }
 

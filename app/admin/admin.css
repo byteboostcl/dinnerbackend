@@ -136,7 +136,161 @@
 .adm__login { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px; }
 .adm__login-card { width: 100%; max-width: 380px; background: #fff; border: 1px solid var(--borde); border-radius: 18px; padding: 32px 30px; }
 
+/* ---------------------------------------------------------------------------
+   Portada: elegir sede
+
+   El panel abre aquí y no dentro de una temporada. Con una sola ciudad daba
+   igual; con cinco, entrar directo a una de ellas hace creer que el panel
+   "es" de esa ciudad, que es justo lo que pasaba cuando el título decía
+   Hermosillo en todas las secciones.
+   --------------------------------------------------------------------------- */
+
+.adm__sedes {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 16px;
+  margin-bottom: 26px;
+}
+
+.adm__sede {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  text-align: left;
+  font: inherit;
+  background: #fff;
+  border: 1px solid var(--borde);
+  border-radius: 16px;
+  padding: 20px;
+  cursor: pointer;
+  transition: border-color 0.18s, transform 0.18s, box-shadow 0.18s;
+}
+.adm__sede:hover {
+  border-color: var(--azul-medio);
+  transform: translateY(-2px);
+  box-shadow: 0 10px 26px rgba(13, 37, 69, 0.08);
+}
+.adm__sede--muda { opacity: 0.55; }
+.adm__sede--muda:hover { transform: none; box-shadow: none; }
+
+.adm__sede-top { display: flex; align-items: center; gap: 12px; }
+
+/* El cuadrito de color con el dibujo. Da a cada sede algo que reconocer de
+   un vistazo, sin tener que leer el nombre. */
+.adm__sede-ico {
+  width: 46px;
+  height: 46px;
+  border-radius: 13px;
+  display: grid;
+  place-items: center;
+  background: var(--azul-claro);
+  color: var(--azul);
+  flex-shrink: 0;
+}
+.adm__sede--activa .adm__sede-ico { background: var(--azul); color: var(--amarillo); }
+
+.adm__sede-nombre { font-size: 17px; font-weight: 800; line-height: 1.2; }
+.adm__sede-slug { font-size: 12px; color: var(--azul-medio); }
+
+.adm__sede-pie {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  border-top: 1px solid rgba(13, 37, 69, 0.07);
+  padding-top: 10px;
+  font-size: 13px;
+  color: var(--azul-medio);
+}
+
+/* Temporadas dentro de una sede abierta */
+.adm__temporadas { display: grid; gap: 10px; margin-top: 4px; }
+
+.adm__temporada {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  background: #fff;
+  border: 1px solid var(--borde);
+  border-radius: 12px;
+  padding: 14px 16px;
+  cursor: pointer;
+  transition: border-color 0.18s, background 0.18s;
+}
+.adm__temporada:hover { border-color: var(--azul-medio); background: var(--azul-claro); }
+.adm__temporada-nombre { font-weight: 700; }
+
+/* ---------------------------------------------------------------------------
+   Navegación por secciones
+   --------------------------------------------------------------------------- */
+
+.adm__nav { display: flex; flex-wrap: wrap; gap: 8px; margin: 4px 0 20px; }
+
+.adm__tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  padding: 9px 15px;
+  border-radius: 999px;
+  border: 1px solid var(--borde);
+  background: #fff;
+  color: var(--azul);
+  cursor: pointer;
+  transition: background 0.18s, border-color 0.18s, color 0.18s;
+}
+.adm__tab:hover { border-color: var(--azul-medio); }
+.adm__tab--on { background: var(--azul); border-color: var(--azul); color: #fff; }
+.adm__tab--on svg { color: var(--amarillo); }
+
+/* Migas: dónde estoy y cómo salgo de aquí */
+.adm__migas {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+  font-size: 13px;
+  color: var(--azul-medio);
+}
+.adm__volver {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--azul);
+  cursor: pointer;
+}
+.adm__volver:hover { text-decoration: underline; }
+
+/* Título con su dibujo al lado */
+.adm__titulo { display: flex; align-items: center; gap: 12px; }
+.adm__titulo-ico {
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  display: grid;
+  place-items: center;
+  background: var(--azul);
+  color: var(--amarillo);
+  flex-shrink: 0;
+}
+
+/* Estado vacío con dibujo, para que una sección sin datos no parezca rota */
+.adm__vacio { text-align: center; padding: 34px 20px; color: var(--azul-medio); }
+.adm__vacio svg { color: rgba(61, 106, 149, 0.4); margin-bottom: 10px; }
+
 @media (max-width: 720px) {
   .adm__main { padding: 20px 16px 60px; }
   .adm__table th:nth-child(4), .adm__table td:nth-child(4) { display: none; }
+  .adm__sedes { grid-template-columns: 1fr; }
 }

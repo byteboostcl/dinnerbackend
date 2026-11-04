@@ -54,8 +54,22 @@ export default function LoginPage() {
   return (
     <div className="adm__login">
       <form className="adm__login-card" onSubmit={handleSubmit}>
+        {/* Sobre fondo claro hace falta la versión oscura del logo; mientras
+            no exista, el bloque azul le da el contraste que el archivo blanco
+            necesita sin inventar un logo distinto. */}
+        <div
+          style={{
+            background: 'var(--azul)',
+            borderRadius: 12,
+            padding: '14px 18px',
+            display: 'inline-block',
+            marginBottom: 18
+          }}
+        >
+          <img src="/logo-dits-white.webp" alt="Dinner in the Sky" style={{ height: 34, display: 'block' }} />
+        </div>
         <h1>Panel</h1>
-        <p className="adm__sub">Dinner in the Sky México</p>
+        <p className="adm__sub">Entra con tu correo de Dinner in the Sky.</p>
 
         {error && <div className="adm__msg adm__msg--error">{error}</div>}
 

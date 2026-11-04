@@ -264,9 +264,15 @@ export function AdminPanel({
   return (
     <>
       <header className="adm__bar">
-        <span className="adm__brand" style={{ display: 'inline-flex', alignItems: 'center', gap: 9 }}>
-          <IconoMesa size={18} />
-          Dinner in the Sky · Panel
+        {/*
+          El logo real de la marca, el mismo archivo que usa el sitio público.
+          Va como <img> y no con next/image porque el alto es fijo y conocido:
+          no hay nada que optimizar y sí una dependencia de configuración que
+          evitar en un panel interno.
+        */}
+        <span className="adm__brand">
+          <img src="/logo-dits-white.webp" alt="Dinner in the Sky" className="adm__logo" />
+          <span className="adm__brand-txt">Panel</span>
         </span>
         <span className="adm__spacer" />
         <span className="adm__who">{user.email}</span>

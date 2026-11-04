@@ -4,6 +4,9 @@ import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { SettingsPanel } from './secciones/SettingsPanel';
 import { StatsPanel } from './secciones/StatsPanel';
 import { SeasonsPanel } from './secciones/SeasonsPanel';
+import { CheckinPanel } from './secciones/CheckinPanel';
+import { CitiesPanel } from './secciones/CitiesPanel';
+import { EmailLogPanel } from './secciones/EmailLogPanel';
 import { useRouter } from 'next/navigation';
 
 /**
@@ -95,13 +98,50 @@ export function AdminPanel({
 }) {
   const router = useRouter();
   const [seasonId, setSeasonId] = useState(seasons[0]?.id ?? '');
+  const [clave, setClave] = useState(false);
   const [message, setMessage] = useState<{ kind: 'ok' | 'error' | 'warn'; text: string } | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [tab, setTab] = useState<
-    'resumen' | 'reservas' | 'temporadas' | 'vuelos' | 'boletos' | 'promos' | 'correo' | 'config'
+    | 'resumen'
+    | 'reservas'
+    | 'puerta'
+    | 'ciudades'
+    | 'temporadas'
+    | 'vuelos'
+    | 'boletos'
+    | 'promos'
+    | 'correo'
+    | 'bitacora'
+    | 'config'
   >('resumen');
 
   const season = useMemo(() => seasons.find(item => item.id === seasonId), [seasons, seasonId]);
+
+  /**
+   * Si la ciudad de esta temporada ya tiene página en el sitio.
+   *
+   * Se consulta aquí y no en cada sección porque es lo que cambia el
+   * significado del botón "Publicar": en una ciudad sin página, publicar no
+   * hace que nadie pueda reservar, y el panel tiene que decirlo antes y no
+   * después.
+   */
+  const [ciudadSinPagina, setCiudadSinPagina] = useState(false);
+
+  useEffect(() => {
+    if (!season) return;
+    (async () => {
+      const response = await fetch('/api/admin/cities', { cache: 'no-store' });
+      const payload = await response.json().catch(() => null);
+      if (!payload?.ok) return;
+
+      const ciudad = (payload.cities as { slug: string; siteStatus: string }[]).find(
+        c => c.slug === season.citySlug
+      );
+      // Si la ciudad ni siquiera está dada de alta, también cuenta como sin
+      // página: nadie construyó nada para ese slug.
+      setCiudadSinPagina(!ciudad || ciudad.siteStatus !== 'LIVE');
+    })();
+  }, [season]);
 
   async function call(url: string, body: unknown): Promise<Record<string, unknown> | null> {
     const response = await fetch(url, {
@@ -162,12 +202,21 @@ export function AdminPanel({
         <span className="adm__brand">Dinner in the Sky · Panel</span>
         <span className="adm__spacer" />
         <span className="adm__who">{user.email}</span>
+        <button
+          className="adm__btn adm__btn--ghost adm__btn--sm"
+          style={{ color: '#fff', borderColor: 'rgba(255,255,255,.35)', marginRight: 8 }}
+          onClick={() => setClave(v => !v)}
+        >
+          Contraseña
+        </button>
         <button className="adm__btn adm__btn--ghost adm__btn--sm" style={{ color: '#fff', borderColor: 'rgba(255,255,255,.35)' }} onClick={logout}>
           Salir
         </button>
       </header>
 
       <main className="adm__main">
+        {clave && <CambiarClave onListo={() => setClave(false)} />}
+
         {seasons.length === 0 ? (
           <div className="adm__card">
             <h2>Todavía no hay temporadas</h2>
@@ -215,17 +264,27 @@ export function AdminPanel({
                   Mientras no esté publicada, esta temporada no se ve en la web ni se puede reservar.
                 </p>
               )}
+              {ciudadSinPagina && (
+                <p className="adm__msg adm__msg--warn" style={{ marginTop: 10, marginBottom: 0 }}>
+                  {season?.citySlug} todavía no tiene página en el sitio. Aquí puedes cargar vuelos, precios y
+                  capturar reservas, pero publicar esta temporada no la hace visible en dinnerinthesky.com.mx: esa
+                  página hay que construirla y desplegarla.
+                </p>
+              )}
             </div>
 
             <div className="adm__row" style={{ margin: '4px 0 16px' }}>
               {([
                 ['resumen', 'Resumen'],
                 ['reservas', 'Reservas'],
+                ['puerta', 'Puerta'],
+                ['ciudades', 'Ciudades'],
                 ['temporadas', 'Temporadas'],
                 ['vuelos', 'Vuelos'],
                 ['boletos', 'Boletos y extras'],
                 ['promos', 'Promociones'],
                 ['correo', 'Correo'],
+                ['bitacora', 'Bitácora'],
                 ['config', 'Configuración']
               ] as const).map(([clave, etiqueta]) => (
                 <button
@@ -242,9 +301,17 @@ export function AdminPanel({
 
             {tab === 'temporadas' && <SeasonsPanel onDone={() => router.refresh()} />}
 
+            {tab === 'puerta' && season && (
+              <CheckinPanel seasonId={season.id} timezone={season.timezone} />
+            )}
+
+            {tab === 'ciudades' && <CitiesPanel onDone={() => router.refresh()} />}
+
+            {tab === 'bitacora' && <EmailLogPanel />}
+
             {tab === 'config' && <SettingsPanel />}
 
-            {tab === 'reservas' && season && <BookingsPanel seasonId={season.id} currency={season.currency} />}
+            {tab === 'reservas' && season && <BookingsPanel season={season} />}
 
             {tab === 'correo' && season && <EmailPanel season={season} />}
 
@@ -350,6 +417,93 @@ function ExperienceCard({
   );
 }
 
+/**
+ * Manda el recordatorio a todo un vuelo.
+ *
+ * Consulta primero cuántos lo recibirían y lo dice antes de enviar: un botón
+ * que dispara 22 correos sin avisar es un botón que nadie se atreve a tocar.
+ * El servidor ya omite a quien ya lo recibió; aquí solo se muestra.
+ */
+function BotonRecordatorio({ flightId }: { flightId: string }) {
+  const [estado, setEstado] = useState<'listo' | 'consultando' | 'confirmar' | 'enviando'>('listo');
+  const [previo, setPrevio] = useState<{ pending: number; alreadySent: number } | null>(null);
+  const [resultado, setResultado] = useState('');
+
+  async function consultar() {
+    setEstado('consultando');
+    setResultado('');
+
+    const response = await fetch(`/api/admin/flights/${flightId}/reminder`);
+    const payload = await response.json().catch(() => null);
+
+    if (!response.ok || !payload?.ok) {
+      setResultado(String(payload?.error ?? 'No se pudo consultar.'));
+      setEstado('listo');
+      return;
+    }
+    setPrevio({ pending: Number(payload.pending ?? 0), alreadySent: Number(payload.alreadySent ?? 0) });
+    setEstado('confirmar');
+  }
+
+  async function enviar() {
+    setEstado('enviando');
+
+    const response = await fetch(`/api/admin/flights/${flightId}/reminder`, { method: 'POST' });
+    const payload = await response.json().catch(() => null);
+
+    if (!response.ok || !payload?.ok) {
+      setResultado(String(payload?.error ?? 'No se pudo enviar.'));
+    } else {
+      const fallidos = Number(payload.failed ?? 0);
+      setResultado(
+        `${payload.sent} enviados` +
+          (payload.skippedAlreadySent ? `, ${payload.skippedAlreadySent} ya lo tenían` : '') +
+          (fallidos ? `, ${fallidos} fallaron` : '')
+      );
+    }
+    setEstado('listo');
+    setPrevio(null);
+  }
+
+  if (estado === 'confirmar' && previo) {
+    return (
+      <span className="adm__row" style={{ justifyContent: 'flex-end', gap: 6 }}>
+        <span className="adm__muted" style={{ fontSize: 13 }}>
+          {previo.pending === 0
+            ? `Ya lo recibieron ${previo.alreadySent}`
+            : `Enviar a ${previo.pending}`}
+        </span>
+        {previo.pending > 0 && (
+          <button className="adm__btn adm__btn--primary adm__btn--sm" onClick={enviar}>
+            Sí
+          </button>
+        )}
+        <button className="adm__btn adm__btn--ghost adm__btn--sm" onClick={() => setEstado('listo')}>
+          No
+        </button>
+      </span>
+    );
+  }
+
+  return (
+    <>
+      <button
+        className="adm__btn adm__btn--ghost adm__btn--sm"
+        onClick={consultar}
+        disabled={estado !== 'listo'}
+        style={{ marginRight: 6 }}
+      >
+        {estado === 'enviando' ? 'Enviando…' : estado === 'consultando' ? '…' : 'Recordatorio'}
+      </button>
+      {resultado && (
+        <div className="adm__muted" style={{ fontSize: 12 }}>
+          {resultado}
+        </div>
+      )}
+    </>
+  );
+}
+
 function FlightRow({
   flight,
   timezone,
@@ -434,6 +588,7 @@ function FlightRow({
         </span>
       </td>
       <td style={{ textAlign: 'right' }}>
+        {flight.bookings > 0 && <BotonRecordatorio flightId={flight.id} />}
         <button className={`adm__btn adm__btn--sm ${closed ? 'adm__btn--ghost' : 'adm__btn--danger'}`} onClick={toggle} disabled={busy}>
           {closed ? 'Abrir' : 'Cerrar'}
         </button>
@@ -865,7 +1020,10 @@ function NuevoHorario({ experienceId, onDone }: { experienceId: string; onDone: 
 }
 
 /** Reservas de la temporada, con búsqueda y filtros. */
-function BookingsPanel({ seasonId, currency }: { seasonId: string; currency: string }) {
+function BookingsPanel({ season }: { season: SeasonView }) {
+  const seasonId = season.id;
+  const currency = season.currency;
+  const [manual, setManual] = useState(false);
   const [bookings, setBookings] = useState<Record<string, unknown>[]>([]);
   const [summary, setSummary] = useState<{ confirmed: number; seats: number; amountCents: number } | null>(null);
   const [total, setTotal] = useState(0);
@@ -917,7 +1075,23 @@ function BookingsPanel({ seasonId, currency }: { seasonId: string; currency: str
             {summary.confirmed} confirmadas · {summary.seats} lugares · {dinero(summary.amountCents)}
           </span>
         )}
+        <button
+          className={`adm__btn ${manual ? 'adm__btn--ghost' : 'adm__btn--primary'} adm__btn--sm`}
+          onClick={() => setManual(!manual)}
+        >
+          {manual ? 'Cerrar' : 'Capturar reserva'}
+        </button>
       </div>
+
+      {manual && (
+        <ReservaManual
+          season={season}
+          onCreada={() => {
+            setManual(false);
+            cargar();
+          }}
+        />
+      )}
 
       <div className="adm__row" style={{ marginBottom: 14 }}>
         <input
@@ -1025,6 +1199,17 @@ function BookingsPanel({ seasonId, currency }: { seasonId: string; currency: str
                               </div>
                             ) : null}
                           </div>
+
+                          <AccionesReserva
+                            bookingId={id}
+                            code={String(b['code'])}
+                            status={String(b['status'])}
+                            amountCents={Number(b['amountCents'])}
+                            notasIniciales={typeof b['internalNotes'] === 'string' ? b['internalNotes'] : ''}
+                            motivoCancelacion={typeof b['cancelReason'] === 'string' ? b['cancelReason'] : ''}
+                            currency={currency}
+                            onCambio={cargar}
+                          />
                         </td>
                       </tr>
                     )}
@@ -1044,8 +1229,444 @@ function BookingsPanel({ seasonId, currency }: { seasonId: string; currency: str
   );
 }
 
+/**
+ * Cambio de la propia contraseña.
+ *
+ * Las cuentas nacen con una contraseña aleatoria que alguien tuvo que mandar
+ * por WhatsApp o correo. Sin esta pantalla, esa contraseña se queda viviendo
+ * en esa conversación para siempre.
+ */
+function CambiarClave({ onListo }: { onListo: () => void }) {
+  const [actual, setActual] = useState('');
+  const [nueva, setNueva] = useState('');
+  const [repetida, setRepetida] = useState('');
+  const [enviando, setEnviando] = useState(false);
+  const [msg, setMsg] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
+
+  const problema =
+    nueva.length > 0 && nueva.length < 10
+      ? 'La nueva debe tener al menos 10 caracteres.'
+      : repetida.length > 0 && nueva !== repetida
+        ? 'Las dos contraseñas nuevas no coinciden.'
+        : '';
+
+  async function guardar() {
+    setEnviando(true);
+    setMsg(null);
+
+    const response = await fetch('/api/auth/password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ currentPassword: actual, newPassword: nueva })
+    });
+    const payload = await response.json().catch(() => null);
+
+    if (!response.ok || !payload?.ok) {
+      setMsg({ kind: 'error', text: String(payload?.error ?? 'No se pudo cambiar.') });
+      setEnviando(false);
+      return;
+    }
+
+    setMsg({ kind: 'ok', text: String(payload.aviso ?? 'Contraseña actualizada.') });
+    setActual('');
+    setNueva('');
+    setRepetida('');
+    setEnviando(false);
+  }
+
+  return (
+    <div className="adm__card">
+      <div className="adm__row">
+        <h2 style={{ margin: 0 }}>Cambiar mi contraseña</h2>
+        <span className="adm__spacer" />
+        <button className="adm__btn adm__btn--ghost adm__btn--sm" onClick={onListo}>Cerrar</button>
+      </div>
+
+      {msg && <div className={`adm__msg adm__msg--${msg.kind}`} style={{ marginTop: 12 }}>{msg.text}</div>}
+
+      <div className="adm__row" style={{ marginTop: 12 }}>
+        <input className="adm__input" type="password" autoComplete="current-password" placeholder="Contraseña actual" value={actual} onChange={e => setActual(e.target.value)} />
+        <input className="adm__input" type="password" autoComplete="new-password" placeholder="Nueva" value={nueva} onChange={e => setNueva(e.target.value)} />
+        <input className="adm__input" type="password" autoComplete="new-password" placeholder="Repite la nueva" value={repetida} onChange={e => setRepetida(e.target.value)} />
+        <button
+          className="adm__btn adm__btn--primary"
+          onClick={guardar}
+          disabled={enviando || !actual || nueva.length < 10 || nueva !== repetida}
+        >
+          {enviando ? 'Guardando…' : 'Cambiar'}
+        </button>
+      </div>
+      {problema && <p className="adm__muted" style={{ marginBottom: 0 }}>{problema}</p>}
+    </div>
+  );
+}
+
+/**
+ * Captura de una venta que no entró por la web: teléfono, WhatsApp, mostrador
+ * o cortesía.
+ *
+ * Es lo que permite apagar TuriTop. Mientras Joan no pueda meter aquí la
+ * venta que cerró por WhatsApp, tiene que seguir metiéndola allá, y entonces
+ * hay dos sistemas peleándose por los mismos 22 asientos.
+ *
+ * El cobro no pasa por aquí: el dinero ya entró por transferencia, efectivo o
+ * es una cortesía. Por eso la nota de cobro es obligatoria — es el único
+ * rastro de cómo se pagó algo que no tiene pago en Stripe.
+ */
+function ReservaManual({ season, onCreada }: { season: SeasonView; onCreada: () => void }) {
+  const [experienceId, setExperienceId] = useState(season.experiences[0]?.id ?? '');
+  const [flightId, setFlightId] = useState('');
+  const [cantidades, setCantidades] = useState<Record<string, number>>({});
+  const [nombre, setNombre] = useState('');
+  const [correo, setCorreo] = useState('');
+  const [telefono, setTelefono] = useState('');
+  const [promo, setPromo] = useState('');
+  const [notaCobro, setNotaCobro] = useState('');
+  const [enviando, setEnviando] = useState(false);
+  const [msg, setMsg] = useState<{ kind: 'ok' | 'error' | 'warn'; text: string } | null>(null);
+
+  const experiencia = season.experiences.find(e => e.id === experienceId);
+  const boletos = experiencia?.ticketTypes.filter(t => t.active) ?? [];
+
+  // Un vuelo que ya salió o está cerrado no admite reservas, y ofrecerlo en
+  // la lista solo lleva a un error del servidor después de teclear todo.
+  const vuelos = (experiencia?.flights ?? []).filter(
+    f => f.status === 'SCHEDULED' && new Date(f.startsAt).getTime() > Date.now()
+  );
+
+  const lugares = boletos.reduce(
+    (total, t) => total + (t.occupiesSeat ? (cantidades[t.id] ?? 0) : 0),
+    0
+  );
+  const subtotal = boletos.reduce((total, t) => total + t.priceCents * (cantidades[t.id] ?? 0), 0);
+  const vuelo = vuelos.find(f => f.id === flightId);
+  const libres = vuelo ? vuelo.capacity - vuelo.seatsTaken : 0;
+
+  const dinero = (cents: number) =>
+    (cents / 100).toLocaleString('es-MX', { style: 'currency', currency: season.currency, maximumFractionDigits: 0 });
+
+  const hora = (iso: string) =>
+    new Intl.DateTimeFormat('es-MX', {
+      timeZone: season.timezone,
+      weekday: 'short',
+      day: '2-digit',
+      month: 'short',
+      hour: '2-digit',
+      minute: '2-digit',
+      hourCycle: 'h23'
+    }).format(new Date(iso));
+
+  const falta =
+    !flightId
+      ? 'Elige un horario.'
+      : lugares === 0
+        ? 'Agrega al menos un boleto que ocupe lugar.'
+        : lugares > libres
+          ? `Ese horario solo tiene ${libres} lugares libres.`
+          : nombre.trim().length < 3
+            ? 'Escribe el nombre de quien reserva.'
+            : !correo.includes('@')
+              ? 'Falta un correo válido: ahí llega la confirmación.'
+              : notaCobro.trim().length < 3
+                ? 'Escribe cómo se cobró (transferencia, efectivo, cortesía).'
+                : '';
+
+  async function capturar() {
+    setEnviando(true);
+    setMsg(null);
+
+    const lines = boletos
+      .filter(t => (cantidades[t.id] ?? 0) > 0)
+      .map(t => ({ ticketTypeId: t.id, quantity: cantidades[t.id] }));
+
+    const response = await fetch('/api/admin/bookings/manual', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        flightId,
+        lines,
+        customerName: nombre.trim(),
+        customerEmail: correo.trim().toLowerCase(),
+        customerPhone: telefono.trim() || null,
+        promoCode: promo.trim() || null,
+        paymentNote: notaCobro.trim()
+      })
+    });
+    const payload = await response.json().catch(() => null);
+
+    if (!response.ok || !payload?.ok) {
+      setMsg({ kind: 'error', text: String(payload?.error ?? 'No se pudo capturar la reserva.') });
+      setEnviando(false);
+      return;
+    }
+
+    const avisos = Array.isArray(payload.warnings) ? payload.warnings.filter(Boolean) : [];
+    setMsg({
+      kind: avisos.length ? 'warn' : 'ok',
+      text: `Reserva ${payload.booking?.code ?? ''} creada.${avisos.length ? ' ' + avisos.join(' ') : ''}`
+    });
+    setEnviando(false);
+    onCreada();
+  }
+
+  return (
+    <div style={{ background: 'var(--azul-claro)', borderRadius: 12, padding: 16, marginBottom: 18 }}>
+      <h3 style={{ marginTop: 0 }}>Capturar reserva</h3>
+      <p className="adm__muted" style={{ marginTop: 0 }}>
+        Para ventas por teléfono o WhatsApp y cortesías. Queda confirmada y aparta los lugares de inmediato.
+      </p>
+
+      {msg && <div className={`adm__msg adm__msg--${msg.kind}`}>{msg.text}</div>}
+
+      <div className="adm__row" style={{ marginBottom: 10 }}>
+        <select
+          className="adm__input"
+          value={experienceId}
+          onChange={e => {
+            setExperienceId(e.target.value);
+            setFlightId('');
+            setCantidades({});
+          }}
+        >
+          {season.experiences.map(e => (
+            <option key={e.id} value={e.id}>{e.name}</option>
+          ))}
+        </select>
+        <select className="adm__input" value={flightId} onChange={e => setFlightId(e.target.value)}>
+          <option value="">Elige horario…</option>
+          {vuelos.map(f => (
+            <option key={f.id} value={f.id}>
+              {hora(f.startsAt)} · {f.capacity - f.seatsTaken} libres
+            </option>
+          ))}
+        </select>
+      </div>
+
+      {vuelos.length === 0 && (
+        <p className="adm__muted">Esta experiencia no tiene horarios abiertos por delante.</p>
+      )}
+
+      {boletos.length === 0 ? (
+        <p className="adm__muted">Esta experiencia todavía no tiene boletos cargados.</p>
+      ) : (
+        boletos.map(t => (
+          <div className="adm__row" key={t.id} style={{ marginBottom: 6 }}>
+            <span style={{ flex: 1 }}>
+              {t.name} · {dinero(t.priceCents)}
+              {!t.occupiesSeat && <span className="adm__muted"> (extra, no ocupa lugar)</span>}
+            </span>
+            <input
+              className="adm__input"
+              type="number"
+              min={0}
+              style={{ width: 90 }}
+              value={cantidades[t.id] ?? 0}
+              onChange={e =>
+                setCantidades({ ...cantidades, [t.id]: Math.max(0, Number(e.target.value) || 0) })
+              }
+            />
+          </div>
+        ))
+      )}
+
+      <div className="adm__row" style={{ margin: '10px 0' }}>
+        <input className="adm__input" style={{ flex: 1 }} placeholder="Nombre de quien reserva" value={nombre} onChange={e => setNombre(e.target.value)} />
+        <input className="adm__input" style={{ flex: 1 }} placeholder="Correo" value={correo} onChange={e => setCorreo(e.target.value)} />
+        <input className="adm__input" style={{ width: 170 }} placeholder="Teléfono" value={telefono} onChange={e => setTelefono(e.target.value)} />
+      </div>
+
+      <div className="adm__row" style={{ marginBottom: 10 }}>
+        <input className="adm__input" style={{ width: 200 }} placeholder="Código promocional (opcional)" value={promo} onChange={e => setPromo(e.target.value)} />
+        <input className="adm__input" style={{ flex: 1 }} placeholder="Cómo se cobró: transferencia, efectivo, cortesía…" value={notaCobro} onChange={e => setNotaCobro(e.target.value)} />
+      </div>
+
+      <div className="adm__row">
+        <strong>{lugares} lugares · {dinero(subtotal)}</strong>
+        <span className="adm__muted">antes de descuento; el total lo calcula el servidor</span>
+        <span className="adm__spacer" />
+        <button className="adm__btn adm__btn--primary" onClick={capturar} disabled={enviando || Boolean(falta)}>
+          {enviando ? 'Capturando…' : 'Capturar y confirmar'}
+        </button>
+      </div>
+      {falta && <p className="adm__muted" style={{ marginBottom: 0 }}>{falta}</p>}
+      <p className="adm__muted" style={{ marginBottom: 0, fontSize: 13 }}>
+        Al confirmarse se le manda el correo de confirmación al cliente.
+      </p>
+    </div>
+  );
+}
+
+/**
+ * Lo que el equipo puede hacer con una reserva ya creada: dejar una nota y
+ * cancelarla.
+ *
+ * La cancelación pide un motivo escrito a propósito. Un reembolso sin motivo
+ * es imposible de explicar tres meses después, cuando ya nadie se acuerda de
+ * la llamada.
+ */
+function AccionesReserva({
+  bookingId,
+  code,
+  status,
+  amountCents,
+  notasIniciales,
+  motivoCancelacion,
+  currency,
+  onCambio
+}: {
+  bookingId: string;
+  code: string;
+  status: string;
+  amountCents: number;
+  notasIniciales: string;
+  motivoCancelacion: string;
+  currency: string;
+  onCambio: () => void;
+}) {
+  const [notas, setNotas] = useState(notasIniciales);
+  const [guardandoNotas, setGuardandoNotas] = useState(false);
+  const [cancelando, setCancelando] = useState(false);
+  const [motivo, setMotivo] = useState('');
+  const [reembolso, setReembolso] = useState('');
+  const [enviando, setEnviando] = useState(false);
+  const [msg, setMsg] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
+
+  const viva = status === 'PENDING' || status === 'CONFIRMED';
+  const dinero = (cents: number) =>
+    (cents / 100).toLocaleString('es-MX', { style: 'currency', currency, maximumFractionDigits: 2 });
+
+  async function enviar(body: Record<string, unknown>, okText: string) {
+    setEnviando(true);
+    setMsg(null);
+
+    const response = await fetch(`/api/admin/bookings/${bookingId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    const payload = await response.json().catch(() => null);
+
+    if (!response.ok || !payload?.ok) {
+      setMsg({ kind: 'error', text: String(payload?.error ?? 'No se pudo guardar.') });
+    } else {
+      setMsg({ kind: 'ok', text: okText });
+      onCambio();
+    }
+    setEnviando(false);
+  }
+
+  async function guardarNotas() {
+    setGuardandoNotas(true);
+    await enviar({ internalNotes: notas }, 'Nota guardada.');
+    setGuardandoNotas(false);
+  }
+
+  async function cancelar() {
+    // El importe se manda en centavos porque es lo único que entiende el
+    // backend; aquí se escribe en pesos porque es lo que tiene a la mano
+    // quien hizo la devolución.
+    const pesos = reembolso.trim() ? Number(reembolso.replace(',', '.')) : 0;
+    if (reembolso.trim() && (!Number.isFinite(pesos) || pesos < 0)) {
+      setMsg({ kind: 'error', text: 'El reembolso tiene que ser un importe en pesos.' });
+      return;
+    }
+
+    await enviar(
+      { action: 'cancel', reason: motivo.trim(), refundCents: Math.round(pesos * 100) },
+      `Reserva ${code} cancelada.`
+    );
+    setCancelando(false);
+    setMotivo('');
+    setReembolso('');
+  }
+
+  return (
+    <div style={{ marginTop: 18, borderTop: '1px solid rgba(0,0,0,.08)', paddingTop: 14 }}>
+      {msg && <div className={`adm__msg adm__msg--${msg.kind}`} style={{ marginBottom: 12 }}>{msg.text}</div>}
+
+      {!viva && motivoCancelacion && (
+        <p className="adm__muted" style={{ marginTop: 0 }}>
+          Motivo registrado: {motivoCancelacion}
+        </p>
+      )}
+
+      <label className="adm__muted" style={{ fontWeight: 700, display: 'block', marginBottom: 6 }}>
+        Nota interna
+      </label>
+      <textarea
+        className="adm__input"
+        rows={2}
+        style={{ width: '100%', marginBottom: 8 }}
+        placeholder="Acuerdos por teléfono, avisos para puerta. El cliente no ve esto."
+        value={notas}
+        onChange={e => setNotas(e.target.value)}
+      />
+      <div className="adm__row">
+        <button
+          className="adm__btn adm__btn--ghost adm__btn--sm"
+          onClick={guardarNotas}
+          disabled={enviando || notas === notasIniciales}
+        >
+          {guardandoNotas ? 'Guardando…' : 'Guardar nota'}
+        </button>
+        <span className="adm__spacer" />
+        {viva && !cancelando && (
+          <button className="adm__btn adm__btn--danger adm__btn--sm" onClick={() => setCancelando(true)}>
+            Cancelar reserva
+          </button>
+        )}
+      </div>
+
+      {cancelando && (
+        <div style={{ marginTop: 14, padding: 14, background: '#fff', borderRadius: 10 }}>
+          <p style={{ marginTop: 0, fontWeight: 700 }}>
+            Cancelar {code}: los {status === 'CONFIRMED' ? 'lugares vuelven a la venta' : 'lugares apartados se liberan'}.
+          </p>
+          <input
+            className="adm__input"
+            style={{ width: '100%', marginBottom: 8 }}
+            placeholder="Motivo (quién pidió la cancelación y por qué)"
+            value={motivo}
+            onChange={e => setMotivo(e.target.value)}
+          />
+          {status === 'CONFIRMED' && (
+            <>
+              <input
+                className="adm__input"
+                style={{ width: '100%', marginBottom: 6 }}
+                placeholder={`Reembolso en pesos (máximo ${dinero(amountCents)}); vacío si no se devolvió dinero`}
+                value={reembolso}
+                onChange={e => setReembolso(e.target.value)}
+              />
+              <p className="adm__muted" style={{ marginTop: 0, fontSize: 13 }}>
+                Esto solo deja constancia. La devolución del dinero se hace aparte, en Stripe o por donde se cobró.
+              </p>
+            </>
+          )}
+          <div className="adm__row">
+            <button
+              className="adm__btn adm__btn--danger adm__btn--sm"
+              onClick={cancelar}
+              disabled={enviando || motivo.trim().length < 3}
+            >
+              {enviando ? 'Cancelando…' : 'Confirmar cancelación'}
+            </button>
+            <button className="adm__btn adm__btn--ghost adm__btn--sm" onClick={() => setCancelando(false)}>
+              Mejor no
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /** Plantilla del correo de confirmación, con vista previa. */
 function EmailPanel({ season }: { season: SeasonView }) {
+  // Dos correos distintos comparten esta pantalla porque comparten todo lo
+  // demás: los mismos marcadores, la misma jerarquía temporada/global y la
+  // misma vista previa. Duplicar el panel solo duplicaría los errores.
+  const [clave, setClave] = useState<'booking_confirmation' | 'booking_reminder'>('booking_confirmation');
   const [subject, setSubject] = useState('');
   const [bodyHtml, setBodyHtml] = useState('');
   const [placeholders, setPlaceholders] = useState<{ tag: string; desc: string }[]>([]);
@@ -1081,19 +1702,36 @@ function EmailPanel({ season }: { season: SeasonView }) {
       if (!payload.ok) return;
 
       setPlaceholders(payload.placeholders ?? []);
-      const lista = payload.templates as { seasonId: string | null; subject: string; bodyHtml: string }[];
-      const propia = lista.find(t => t.seasonId === season.id);
-      const general = lista.find(t => t.seasonId === null);
+      const lista = payload.templates as {
+        key: string;
+        seasonId: string | null;
+        subject: string;
+        bodyHtml: string;
+      }[];
+      const deEsta = lista.filter(t => t.key === clave);
+      const propia = deEsta.find(t => t.seasonId === season.id);
+      const general = deEsta.find(t => t.seasonId === null);
       const elegida = propia ?? general;
 
       setPorTemporada(Boolean(propia));
-      setSubject(elegida?.subject ?? 'Confirmación de vuelo — %date_event% para %name%');
-      setBodyHtml(
-        elegida?.bodyHtml ??
-          '<h2>Hola %name%,</h2>\n<p>Tu reserva <strong>%booking_id%</strong> quedó confirmada.</p>\n<p>%product_name% · %date_event% · %time_event%</p>\n<p>%seats% invitados · %total%</p>\n<p>%venue_name%<br>%venue_address%</p>'
-      );
+
+      const ejemplo =
+        clave === 'booking_reminder'
+          ? {
+              subject: 'Mañana vuelas con nosotros, %name% — %time_event%',
+              body:
+                '<h2>Hola %name%,</h2>\n<p>Te esperamos en <strong>%venue_name%</strong> el %date_event% a las %time_event%.</p>\n<p>Llega 30 minutos antes. Tu reserva es <strong>%booking_id%</strong> para %seats% personas.</p>\n<p>%venue_address%</p>\n<p>Si algo cambia, escríbenos a %company_phone%.</p>'
+            }
+          : {
+              subject: 'Confirmación de vuelo — %date_event% para %name%',
+              body:
+                '<h2>Hola %name%,</h2>\n<p>Tu reserva <strong>%booking_id%</strong> quedó confirmada.</p>\n<p>%product_name% · %date_event% · %time_event%</p>\n<p>%seats% invitados · %total%</p>\n<p>%venue_name%<br>%venue_address%</p>'
+            };
+
+      setSubject(elegida?.subject ?? ejemplo.subject);
+      setBodyHtml(elegida?.bodyHtml ?? ejemplo.body);
     })();
-  }, [season.id]);
+  }, [season.id, clave]);
 
   async function guardar() {
     setGuardando(true);
@@ -1103,7 +1741,7 @@ function EmailPanel({ season }: { season: SeasonView }) {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        key: 'booking_confirmation',
+        key: clave,
         seasonId: porTemporada ? season.id : null,
         subject,
         bodyHtml
@@ -1140,9 +1778,23 @@ function EmailPanel({ season }: { season: SeasonView }) {
 
   return (
     <div className="adm__card">
-      <h2>Correo de confirmación</h2>
-      <p className="adm__muted" style={{ marginTop: -6 }}>
-        Se envía cuando se confirma el pago.
+      <div className="adm__row" style={{ marginBottom: 2 }}>
+        <h2 style={{ margin: 0 }}>Correos automáticos</h2>
+        <span className="adm__spacer" />
+        <select
+          className="adm__input"
+          style={{ width: 'auto' }}
+          value={clave}
+          onChange={e => setClave(e.target.value as 'booking_confirmation' | 'booking_reminder')}
+        >
+          <option value="booking_confirmation">Confirmación</option>
+          <option value="booking_reminder">Recordatorio</option>
+        </select>
+      </div>
+      <p className="adm__muted" style={{ marginTop: 6 }}>
+        {clave === 'booking_confirmation'
+          ? 'Se envía solo, al confirmarse el pago.'
+          : 'Se envía desde la pestaña Vuelos, cuando el equipo lo manda para un horario. No sale solo.'}
       </p>
 
       {msg && <div className={`adm__msg adm__msg--${msg.kind}`}>{msg.text}</div>}

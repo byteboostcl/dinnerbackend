@@ -6,7 +6,12 @@ import { MARCADORES } from '@/lib/email-template';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-const CLAVES = ['booking_confirmation'] as const;
+/**
+ * Correos que el equipo puede redactar desde el panel. La lista es cerrada a
+ * propósito: una clave con un error de dedo crearía una plantilla que nadie
+ * va a enviar nunca, y nadie se enteraría hasta que un cliente reclame.
+ */
+const CLAVES = ['booking_confirmation', 'booking_reminder'] as const;
 
 /** GET — plantillas guardadas y la lista de marcadores disponibles. */
 export async function GET(request: Request): Promise<Response> {

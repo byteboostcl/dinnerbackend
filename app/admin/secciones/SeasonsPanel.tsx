@@ -25,7 +25,13 @@ type Message = { kind: 'ok' | 'error'; text: string };
 
 type ExperienceDraft = { name: string; pesos: string };
 
-const ZONAS = ['America/Hermosillo', 'America/Mexico_City', 'America/Tijuana'] as const;
+type CityOption = {
+  slug: string;
+  name: string;
+  timezone: string;
+  siteStatus: 'LIVE' | 'PENDING';
+  active: boolean;
+};
 
 const ESTADOS: Record<SeasonView['status'], string> = {
   DRAFT: 'Borrador',
@@ -118,15 +124,42 @@ export function SeasonsPanel({ onDone }: { onDone: () => void }) {
 }
 
 function NewSeasonForm({ onCreated, onError }: { onCreated: (text: string) => void; onError: (text: string) => void }) {
+  const [cities, setCities] = useState<CityOption[]>([]);
   const [citySlug, setCitySlug] = useState('');
   const [name, setName] = useState('');
   const [venueName, setVenueName] = useState('');
   const [venueAddress, setVenueAddress] = useState('');
-  const [timezone, setTimezone] = useState<string>(ZONAS[0]);
+  // La zona sale de la ciudad y no se teclea: equivocarla corre todos los
+  // vuelos de la temporada, y es un error que nadie nota hasta que alguien
+  // llega una hora tarde.
+  const [timezone, setTimezone] = useState<string>('America/Mexico_City');
   const [startsOn, setStartsOn] = useState('');
   const [endsOn, setEndsOn] = useState('');
   const [experiences, setExperiences] = useState<ExperienceDraft[]>([{ name: '', pesos: '' }]);
   const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      const response = await fetch('/api/admin/cities', { cache: 'no-store' });
+      const payload = await response.json().catch(() => null);
+      if (!payload?.ok) return;
+
+      const lista = (payload.cities as CityOption[]).filter(c => c.active);
+      setCities(lista);
+      if (lista[0]) {
+        setCitySlug(lista[0].slug);
+        setTimezone(lista[0].timezone);
+      }
+    })();
+  }, []);
+
+  const ciudad = cities.find(c => c.slug === citySlug);
+
+  function elegirCiudad(slug: string) {
+    setCitySlug(slug);
+    const elegida = cities.find(c => c.slug === slug);
+    if (elegida) setTimezone(elegida.timezone);
+  }
 
   function cambiarExperiencia(index: number, cambio: Partial<ExperienceDraft>) {
     setExperiences(list => list.map((item, i) => (i === index ? { ...item, ...cambio } : item)));
@@ -170,7 +203,8 @@ function NewSeasonForm({ onCreated, onError }: { onCreated: (text: string) => vo
       return;
     }
 
-    setCitySlug('');
+    // La ciudad se queda elegida: quien acaba de crear la temporada de una
+    // sede casi siempre va a crear otra de la misma.
     setName('');
     setVenueName('');
     setVenueAddress('');
@@ -185,29 +219,39 @@ function NewSeasonForm({ onCreated, onError }: { onCreated: (text: string) => vo
       <h2>Nueva temporada</h2>
       <div className="adm__row">
         <div className="adm__field">
-          <label className="adm__label">Ciudad (slug del sitio)</label>
-          <input
-            className="adm__input"
-            value={citySlug}
-            placeholder="hermosillo"
-            onChange={e => setCitySlug(e.target.value)}
-          />
-        </div>
-        <div className="adm__field">
-          <label className="adm__label">Nombre</label>
-          <input className="adm__input" value={name} onChange={e => setName(e.target.value)} />
-        </div>
-        <div className="adm__field">
-          <label className="adm__label">Zona horaria</label>
-          <select className="adm__input" value={timezone} onChange={e => setTimezone(e.target.value)}>
-            {ZONAS.map(zona => (
-              <option key={zona} value={zona}>
-                {zona}
+          <label className="adm__label">Ciudad</label>
+          <select className="adm__input" value={citySlug} onChange={e => elegirCiudad(e.target.value)}>
+            {cities.length === 0 && <option value="">Cargando…</option>}
+            {cities.map(c => (
+              <option key={c.slug} value={c.slug}>
+                {c.name}
+                {c.siteStatus === 'PENDING' ? ' — sin página' : ''}
               </option>
             ))}
           </select>
         </div>
+        <div className="adm__field">
+          <label className="adm__label">Nombre de la temporada</label>
+          <input
+            className="adm__input"
+            placeholder="Hermosillo marzo 2027"
+            value={name}
+            onChange={e => setName(e.target.value)}
+          />
+        </div>
+        <div className="adm__field">
+          <label className="adm__label">Horario local</label>
+          <input className="adm__input" value={timezone} readOnly disabled />
+        </div>
       </div>
+
+      {ciudad?.siteStatus === 'PENDING' && (
+        <p className="adm__msg adm__msg--warn">
+          {ciudad.name} todavía no tiene página en el sitio. Puedes cargarle la temporada, los vuelos y los precios,
+          y capturar reservas desde el panel, pero publicarla no la hace visible en dinnerinthesky.com.mx hasta que
+          su página esté construida y desplegada.
+        </p>
+      )}
       <div className="adm__row">
         <div className="adm__field">
           <label className="adm__label">Sede</label>

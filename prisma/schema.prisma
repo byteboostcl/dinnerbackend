@@ -216,6 +216,96 @@ model EmailTemplate {
   @@map("email_templates")
 }
 
+/// Registro de cada correo que sale del sistema.
+///
+/// Existe por una razón muy concreta de operación: cuando alguien llama
+/// diciendo "no me llegó la confirmación", el equipo necesita poder
+/// responder si se envió, a qué dirección y si el proveedor lo aceptó, en
+/// vez de adivinar. También deja ver de un vistazo si los recordatorios de
+/// un vuelo ya salieron, que es lo que evita mandarlos dos veces.
+model EmailLog {
+  id String @id @default(uuid())
+
+  /// 'booking_confirmation', 'booking_reminder', 'test'.
+  kind String
+
+  /// Puede ser null: un envío de prueba no pertenece a ninguna reserva.
+  bookingId String?
+  booking   Booking? @relation(fields: [bookingId], references: [id], onDelete: SetNull)
+
+  toEmail String
+  subject String
+
+  /// true si el proveedor aceptó el envío. Aceptado no es lo mismo que
+  /// entregado, y por eso se guarda también la respuesta.
+  ok    Boolean
+  /// Id que devuelve Resend, para rastrear el mensaje en su panel.
+  providerId String?
+  /// Mensaje de error cuando falló, tal cual llegó.
+  error String? @db.Text
+
+  /// Correo del staff cuando el envío fue manual; null si fue automático.
+  sentBy String?
+
+  createdAt DateTime @default(now())
+
+  @@index([bookingId])
+  @@index([kind, createdAt])
+  @@map("email_logs")
+}
+
+/// Hasta dónde llega una ciudad en el sitio público.
+enum CitySiteStatus {
+  /// Tiene página propia en el sitio Angular y la reserva funciona ahí.
+  LIVE
+  /// Existe para el equipo y ya puede tener temporadas y vuelos, pero el
+  /// sitio todavía no la muestra: falta construir su página.
+  PENDING
+}
+
+/// Sede de Dinner in the Sky.
+///
+/// Existe para que el equipo pueda crear la temporada de una ciudad nueva sin
+/// pedirle nada a nadie, y para que el panel deje de depender de que alguien
+/// teclee bien un slug: una letra de más en "ciudad-de-mexico" dejaba la
+/// temporada apuntando a una página que no existe, y nada avisaba.
+///
+/// `siteStatus` NO se edita desde el panel a propósito. Que una ciudad
+/// aparezca en el sitio depende de que alguien construya su página en el
+/// repositorio Angular (ruta, textos, fotos y el alta en CITIES). Mientras eso
+/// no ocurra, crear la temporada aquí no la publica en ningún lado, y el panel
+/// tiene que decirlo en vez de dejar creer lo contrario. El cambio a LIVE lo
+/// hace quien despliega el sitio, con `scripts/city-live.mjs`.
+model City {
+  /// Coincide exactamente con el slug de la ruta en el sitio ('hermosillo',
+  /// 'ciudad-de-mexico'). Es la llave porque es lo que viaja en la URL.
+  slug String @id
+
+  name String
+
+  /// Zona IANA por omisión al crear temporadas de esta ciudad. Sonora no
+  /// cambia de horario y el resto del país sí, así que equivocarse aquí
+  /// corre todos los vuelos una hora.
+  timezone String
+
+  siteStatus CitySiteStatus @default(PENDING)
+
+  /// Orden en el que el equipo quiere verlas listadas.
+  position Int @default(0)
+
+  /// Una ciudad que ya no opera se desactiva; nunca se borra, porque sus
+  /// temporadas y reservas vendidas siguen existiendo.
+  active Boolean @default(true)
+
+  /// Nota del equipo: contacto de la sede, pendientes, lo que haga falta.
+  notes String? @db.Text
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("cities")
+}
+
 model Season {
   id String @id @default(uuid())
 
@@ -451,9 +541,19 @@ model Booking {
 
   confirmedAt DateTime?
   cancelledAt DateTime?
+  /// Por qué se canceló, en palabras del staff. Sin esto, meses después
+  /// nadie puede explicar un reembolso.
+  cancelReason String?
+  /// Quién canceló (correo del staff), para no depender de la memoria.
+  cancelledBy String?
 
-  tickets Ticket[]
-  items   BookingItem[]
+  /// Notas del equipo sobre la reserva: cambios por teléfono, acuerdos,
+  /// avisos para puerta. No se muestran al cliente ni salen en el correo.
+  internalNotes String? @db.Text
+
+  tickets   Ticket[]
+  items     BookingItem[]
+  emailLogs EmailLog[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

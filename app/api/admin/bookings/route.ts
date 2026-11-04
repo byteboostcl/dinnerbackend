@@ -104,8 +104,14 @@ export async function GET(request: Request): Promise<Response> {
       invoiceRequested: b.invoiceRequested,
       preferences: b.preferences,
       channel: b.channel,
+      // La nota y el motivo viajan en la lista, no solo en el detalle: el
+      // panel los edita desde la misma fila que ya está abierta, y pedir
+      // otra consulta para mostrar dos campos de texto no se paga.
+      internalNotes: b.internalNotes,
+      cancelReason: b.cancelReason,
       createdAt: b.createdAt,
       confirmedAt: b.confirmedAt,
+      cancelledAt: b.cancelledAt,
       flight: {
         id: b.flight.id,
         startsAt: b.flight.startsAt,

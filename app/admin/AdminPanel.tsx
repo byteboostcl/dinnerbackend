@@ -74,6 +74,35 @@ interface SeasonView {
   experiences: ExperienceView[];
 }
 
+/**
+ * El título de la página es la sección, no la temporada.
+ *
+ * Antes el `<h1>` era el nombre de la temporada activa, y con una sola sede
+ * eso parecía razonable. Con varias ciudades deja de serlo: el panel entero
+ * decía "Hermosillo marzo 2027" incluso estando en Ciudades o en Bitácora,
+ * que no tienen nada que ver con una temporada.
+ */
+const TITULOS: Record<string, string> = {
+  resumen: 'Resumen',
+  reservas: 'Reservas',
+  puerta: 'Puerta',
+  ciudades: 'Sedes',
+  temporadas: 'Temporadas',
+  vuelos: 'Vuelos',
+  boletos: 'Boletos y extras',
+  promos: 'Promociones',
+  correo: 'Correos automáticos',
+  bitacora: 'Bitácora de correos',
+  config: 'Configuración'
+};
+
+/**
+ * Secciones que trabajan sobre UNA temporada. El resto son transversales, y
+ * mostrarles encima el selector de temporada hacía creer que lo que se ve ahí
+ * depende de la que esté elegida.
+ */
+const SECCION_DE_TEMPORADA = new Set(['resumen', 'reservas', 'puerta', 'vuelos', 'boletos', 'correo']);
+
 const STATUS_LABEL: Record<string, string> = {
   DRAFT: 'Borrador',
   PUBLISHED: 'Publicada',
@@ -125,23 +154,36 @@ export function AdminPanel({
    * hace que nadie pueda reservar, y el panel tiene que decirlo antes y no
    * después.
    */
-  const [ciudadSinPagina, setCiudadSinPagina] = useState(false);
+  const [ciudades, setCiudades] = useState<{ slug: string; name: string; siteStatus: string }[]>([]);
 
   useEffect(() => {
-    if (!season) return;
     (async () => {
       const response = await fetch('/api/admin/cities', { cache: 'no-store' });
       const payload = await response.json().catch(() => null);
-      if (!payload?.ok) return;
-
-      const ciudad = (payload.cities as { slug: string; siteStatus: string }[]).find(
-        c => c.slug === season.citySlug
-      );
-      // Si la ciudad ni siquiera está dada de alta, también cuenta como sin
-      // página: nadie construyó nada para ese slug.
-      setCiudadSinPagina(!ciudad || ciudad.siteStatus !== 'LIVE');
+      if (payload?.ok) {
+        setCiudades(payload.cities as { slug: string; name: string; siteStatus: string }[]);
+      }
     })();
-  }, [season]);
+  }, []);
+
+  /**
+   * El nombre de la sede, no su slug. "hermosillo" es lo que va en la URL;
+   * lo que el equipo lee tiene que ser "Hermosillo", y "ciudad-de-mexico"
+   * directamente no se puede enseñar.
+   *
+   * Si la ciudad no está dada de alta se muestra el slug tal cual: inventar
+   * un nombre bonito escondería justo el problema que hay que ver.
+   */
+  function nombreCiudad(slug: string | undefined): string {
+    if (!slug) return '';
+    return ciudades.find(c => c.slug === slug)?.name ?? slug;
+  }
+
+  const ciudadActual = ciudades.find(c => c.slug === season?.citySlug);
+  // Si la ciudad ni siquiera está dada de alta, también cuenta como sin
+  // página: nadie construyó nada para ese slug. Se espera a tener la lista
+  // cargada para no avisar en falso durante el primer render.
+  const ciudadSinPagina = ciudades.length > 0 && ciudadActual?.siteStatus !== 'LIVE';
 
   async function call(url: string, body: unknown): Promise<Record<string, unknown> | null> {
     const response = await fetch(url, {
@@ -224,22 +266,31 @@ export function AdminPanel({
           </div>
         ) : (
           <>
-            <h1>{season?.name}</h1>
+            <h1>{TITULOS[tab]}</h1>
             <p className="adm__sub">
-              {season?.citySlug} · horarios en {season?.timezone.replace('America/', '')}
+              {SECCION_DE_TEMPORADA.has(tab)
+                ? `${nombreCiudad(season?.citySlug)} · ${season?.name} · horarios en ${season?.timezone}`
+                : 'Todas las sedes'}
             </p>
 
             {message && <div className={`adm__msg adm__msg--${message.kind}`}>{message.text}</div>}
 
+            {SECCION_DE_TEMPORADA.has(tab) && (
             <div className="adm__card">
               <div className="adm__row">
-                {seasons.length > 1 && (
-                  <select className="adm__input" style={{ width: 'auto' }} value={seasonId} onChange={event => setSeasonId(event.target.value)}>
-                    {seasons.map(item => (
-                      <option key={item.id} value={item.id}>{item.name}</option>
-                    ))}
-                  </select>
-                )}
+                {/*
+                  El selector va siempre, aunque solo haya una temporada: es lo
+                  único que dice sobre qué se está trabajando, y esconderlo
+                  cuando hay una sola convierte la primera temporada nueva en
+                  una sorpresa.
+                */}
+                <select className="adm__input" style={{ width: 'auto' }} value={seasonId} onChange={event => setSeasonId(event.target.value)}>
+                  {seasons.map(item => (
+                    <option key={item.id} value={item.id}>
+                      {nombreCiudad(item.citySlug)} · {item.name}
+                    </option>
+                  ))}
+                </select>
                 <span className={`adm__chip adm__chip--${(season?.status ?? '').toLowerCase()}`}>
                   {STATUS_LABEL[season?.status ?? ''] ?? season?.status}
                 </span>
@@ -266,12 +317,13 @@ export function AdminPanel({
               )}
               {ciudadSinPagina && (
                 <p className="adm__msg adm__msg--warn" style={{ marginTop: 10, marginBottom: 0 }}>
-                  {season?.citySlug} todavía no tiene página en el sitio. Aquí puedes cargar vuelos, precios y
-                  capturar reservas, pero publicar esta temporada no la hace visible en dinnerinthesky.com.mx: esa
-                  página hay que construirla y desplegarla.
+                  {nombreCiudad(season?.citySlug)} todavía no tiene página en el sitio. Aquí puedes cargar vuelos,
+                  precios y capturar reservas, pero publicar esta temporada no la hace visible en
+                  dinnerinthesky.com.mx: esa página hay que construirla y desplegarla.
                 </p>
               )}
             </div>
+            )}
 
             <div className="adm__row" style={{ margin: '4px 0 16px' }}>
               {([

@@ -1,6 +1,9 @@
 'use client';
 
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
+import { SettingsPanel } from './secciones/SettingsPanel';
+import { StatsPanel } from './secciones/StatsPanel';
+import { SeasonsPanel } from './secciones/SeasonsPanel';
 import { useRouter } from 'next/navigation';
 
 /**
@@ -94,7 +97,9 @@ export function AdminPanel({
   const [seasonId, setSeasonId] = useState(seasons[0]?.id ?? '');
   const [message, setMessage] = useState<{ kind: 'ok' | 'error' | 'warn'; text: string } | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
-  const [tab, setTab] = useState<'reservas' | 'vuelos' | 'boletos' | 'promos' | 'correo'>('reservas');
+  const [tab, setTab] = useState<
+    'resumen' | 'reservas' | 'temporadas' | 'vuelos' | 'boletos' | 'promos' | 'correo' | 'config'
+  >('resumen');
 
   const season = useMemo(() => seasons.find(item => item.id === seasonId), [seasons, seasonId]);
 
@@ -214,11 +219,14 @@ export function AdminPanel({
 
             <div className="adm__row" style={{ margin: '4px 0 16px' }}>
               {([
+                ['resumen', 'Resumen'],
                 ['reservas', 'Reservas'],
+                ['temporadas', 'Temporadas'],
                 ['vuelos', 'Vuelos'],
                 ['boletos', 'Boletos y extras'],
                 ['promos', 'Promociones'],
-                ['correo', 'Correo']
+                ['correo', 'Correo'],
+                ['config', 'Configuración']
               ] as const).map(([clave, etiqueta]) => (
                 <button
                   key={clave}
@@ -229,6 +237,12 @@ export function AdminPanel({
                 </button>
               ))}
             </div>
+
+            {tab === 'resumen' && season && <StatsPanel seasonId={season.id} />}
+
+            {tab === 'temporadas' && <SeasonsPanel onDone={() => router.refresh()} />}
+
+            {tab === 'config' && <SettingsPanel />}
 
             {tab === 'reservas' && season && <BookingsPanel seasonId={season.id} currency={season.currency} />}
 

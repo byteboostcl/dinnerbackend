@@ -500,3 +500,39 @@ model StripeEvent {
   @@index([type])
   @@map("stripe_events")
 }
+
+/// Configuración general de la empresa (fila única, id "default").
+///
+/// Vive en base de datos y no en variables de entorno para que el staff pueda
+/// cambiar contacto, medición y política de cancelación sin un despliegue.
+model CompanySettings {
+  id                 String   @id @default("default")
+  companyName        String
+  contactEmail       String
+  bookingsEmail      String?
+  phone              String?
+
+  website            String?
+  facebook           String?
+  instagram          String?
+  tiktok             String?
+
+  timezone           String   @default("America/Mexico_City")
+  currency           String   @default("MXN")
+
+  gtmId              String?
+  metaPixelId        String?
+  ga4Id              String?
+
+  /// A dónde se manda al cliente después de pagar.
+  confirmationUrl    String?
+  cancellationPolicy String?  @db.Text
+  termsUrl           String?
+  privacyUrl         String?
+
+  updatedBy          String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@map("company_settings")
+}
